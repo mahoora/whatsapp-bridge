@@ -45,8 +45,17 @@ function saveCredsToEnv() {
 
 loadCreds();
 
-const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدات حريق. تتحدث بالعربية.\n\n' +
-'** مهم جدا: استخدم قائمة المنتجات التالية عند الرد على أسئلة العملاء عن الأسعار أو الإيجار **\n\n' +
+function loadFamilyContacts() {
+  try { return JSON.parse(fs.readFileSync('./family-contacts.json')); }
+  catch(e) { return []; }
+}
+function saveFamilyContacts(data) {
+  fs.writeFileSync('./family-contacts.json', JSON.stringify(data, null, 2));
+}
+
+const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدات حريق.\n\n' +
+'العنوان: شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
+'** مهم جدا: استخدم قائمة المنتجات التالية عند الرد **\n\n' +
 'قائمة المنتجات للإيجار مع الأسعار (ريال/اليوم):\n' +
 '1. ماكينة سن 2 بوصة ← 100 ريال/اليوم\n' +
 '2. ماكينة سن 3 بوصة ← 120 ريال/اليوم\n' +
@@ -59,11 +68,19 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدا
 '9. مولد كهرباء 3 كيلو ← 100 ريال/اليوم\n' +
 '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال/اليوم\n\n' +
 '** تعليمات الرد **\n' +
+'- حدد لهجة الرسالة الواردة ورد بنفس اللهجة (يمني، مصري، سعودي، شامي، عراقي، خليجي، إلخ)\n' +
 '- إذا سأل العميل عن منتج معين: اذكر اسم المنتج وسعره بالضبط من القائمة\n' +
 '- إذا سأل عن الإيجار: اذكر السعر لليوم وقل السعر يتغير حسب المدة\n' +
 '- الصيانة: تحتاج معاينة من فني\n' +
 '- إذا طلب العميل طلب: اسأل عن المنتج والمدة واسمه ورقم هاتفه\n' +
-'- ردودك مختصرة ومفيدة وبالعربية فقط';
+'- ردودك مختصرة ومفيدة وبالعربية فقط\n' +
+'- إذا كان المتصل من العائلة أو الأقارب: رد بطريقة مناسبة حسب صلة القرابة\n' +
+'  * الزوجة: رد رومانسي وحنون\n' +
+'  * الأخت: اسأل عن أحوالها وأولادها واطمئنان\n' +
+'  * الأخ: أسئلة شخصية واطمئنان وسلام\n' +
+'  * أولاد الإخوة: رد حنون مناسب\n' +
+'  * الأم/الأب: رد مليء بالاحترام والبر\n' +
+'  * بشكل عام: ليسوا عملاء، رد بطريقة أسرية';
 
 function callGroq(messages) {
   return new Promise((resolve, reject) => {
@@ -90,6 +107,7 @@ function callGroq(messages) {
 // Conversation memory: keep last 30 messages per user
 const conversationHistory = new Map();
 const MAX_HISTORY = 30;
+let familyContacts = loadFamilyContacts();
 
 async function startBridge() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -148,12 +166,19 @@ async function startBridge() {
       history.push({ role: 'user', content: text });
       if (history.length > MAX_HISTORY) history.shift();
 
+      // Check if sender is family
+      const family = familyContacts.find(f => f.phone && from.includes(f.phone));
+      let familyContext = '';
+      if (family) {
+        familyContext = ' [معلومة: هذا المتصل هو ' + family.relationship + ' (' + family.name + '). رد عليه كـ ' + family.style + ' وليس كعميل.]';
+      }
+
       try {
         // Prepare messages for Groq: system + history + current message
         const groqMessages = [
           { role: 'system', content: SYSTEM_PROMPT },
           ...history.slice(-10), // last 10 messages for context
-          { role: 'user', content: text }
+          { role: 'user', content: text + familyContext }
         ];
 
         // Call Groq directly for the reply
@@ -230,6 +255,27 @@ async function startBridge() {
     const order = ordersDb.setOrderStatus(Number(req.params.id), status);
     if (!order) return res.status(404).json({ error: 'Order not found' });
     res.json(order);
+  });
+
+  app.get('/family', (req, res) => {
+    res.json(familyContacts);
+  });
+
+  app.post('/family', (req, res) => {
+    const { phone, name, relationship, style } = req.body;
+    if (!phone || !name || !relationship) return res.status(400).json({ error: 'Missing fields: phone, name, relationship' });
+    const contact = { phone, name, relationship, style: style || 'custom' };
+    familyContacts = familyContacts.filter(f => f.phone !== phone);
+    familyContacts.push(contact);
+    saveFamilyContacts(familyContacts);
+    res.json(contact);
+  });
+
+  app.delete('/family/:phone', (req, res) => {
+    const phone = req.params.phone;
+    familyContacts = familyContacts.filter(f => f.phone !== phone);
+    saveFamilyContacts(familyContacts);
+    res.json({ success: true });
   });
 
   app.get('/', (req, res) => {
