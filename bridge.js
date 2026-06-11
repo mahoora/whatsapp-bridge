@@ -118,7 +118,7 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدا
 '2. إذا قال نعم أو أي تأكيد: أعطه رابط الجروب: https://chat.whatsapp.com/DL3qCnpSs6fHU5VYZgDgNL\n' +
 '3. وحذره: لا تنشر أي صور لمواد السباكة أو الحريق (حديد أو بلاستيك) لأن هذا جروب خاص بالمؤسسة فقط';
 
-function callGroq(messages) {
+function callGroq(messages, retries = 2) {
   let done = false;
   return new Promise((resolve, reject) => {
     const safeResolve = (v) => { if (!done) { done = true; resolve(v); } };
@@ -135,6 +135,12 @@ function callGroq(messages) {
       res.on('end', () => {
         try {
           const j = JSON.parse(b);
+          if (res.statusCode === 429 && retries > 0) {
+            const wait = (retries === 2 ? 3000 : 6000);
+            console.error('Groq 429, retrying in ' + wait + 'ms...');
+            setTimeout(() => { safeResolve(callGroq(messages, retries - 1)); }, wait);
+            return;
+          }
           if (res.statusCode !== 200) {
             console.error('Groq HTTP ' + res.statusCode + ': ' + b.substring(0, 200));
             safeReject(new Error('Groq ' + res.statusCode));
