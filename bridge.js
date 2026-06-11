@@ -200,6 +200,8 @@ let currentSock = null;
 let wsConnected = false;
 let msgCount = 0;
 let lastError = '';
+let lastFrom = '';
+let lastReply = '';
 
 app.post('/send', async (req, res) => {
   const { to, text } = req.body;
@@ -288,7 +290,7 @@ app.delete('/family/:phone', (req, res) => {
 });
 
 app.get('/diag', (req, res) => {
-  res.json({ msgCount, lastError, wsConnected, user: currentSock?.user?.id });
+  res.json({ msgCount, lastError, lastFrom, lastReply, wsConnected, user: currentSock?.user?.id });
 });
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!wsConnected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
@@ -307,7 +309,6 @@ async function startBridge() {
 
   sock.ev.on('creds.update', () => { saveCreds(); saveCredsToEnv(); });
 
-  let reconnectTimer = null;
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
       latestQr = qr;
@@ -319,11 +320,7 @@ async function startBridge() {
     }
     if (connection === 'close') {
       wsConnected = false;
-      const reason = lastDisconnect?.error?.output?.statusCode;
       console.log('Disconnected. Reason: ' + (lastDisconnect?.error?.message || 'unknown'));
-      if (reason !== DisconnectReason.loggedOut && !reconnectTimer) {
-        reconnectTimer = setTimeout(() => { reconnectTimer = null; startBridge(); }, 5000);
-      }
     }
   });
 
@@ -357,6 +354,7 @@ async function startBridge() {
       if (!text) continue;
 
       msgCount++;
+      lastFrom = from;
 
       if (!conversationHistory.has(from)) {
         conversationHistory.set(from, []);
@@ -382,7 +380,8 @@ async function startBridge() {
         const replyText = await callGroq(groqMessages);
 
         if (replyText) {
-          await sock.sendMessage(from, { text: replyText });
+          lastReply = replyText.substring(0, 100);
+          await currentSock.sendMessage(from, { text: replyText });
           history.push({ role: 'assistant', content: replyText });
           if (history.length > MAX_HISTORY) history.shift();
           try { saveHistory(); } catch(e) {}
@@ -394,7 +393,7 @@ async function startBridge() {
               if (resp.ok) {
                 const buf = Buffer.from(await resp.arrayBuffer());
                 if (buf.length > 500) {
-                  await sock.sendMessage(from, { audio: buf, mimetype: 'audio/mpeg', ptt: true });
+                  await currentSock.sendMessage(from, { audio: buf, mimetype: 'audio/mpeg', ptt: true });
                 }
               }
             } catch (e) { console.error('TTS error: ' + e.message); }
