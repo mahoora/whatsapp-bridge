@@ -1,0 +1,14 @@
+﻿{
+  "products": [
+    {"id":1,"name":"ماكينة سن 2 بوصة","rental":100,"rentalUnit":"ريال/اليوم","maintenance":"حسب المعاينة","category":"معدات سن"},
+    {"id":2,"name":"ماكينة سن 3 بوصة","rental":120,"rentalUnit":"ريال/اليوم","maintenance":"حسب المعاينة","category":"معدات سن"},
+    {"id":3,"name":"مكنة جروف","rental":80,"rentalUnit":"ريال/اليوم","maintenance":"حسب المعاينة","category":"معدات حريق"},
+    {"id":4,"name":"خواشة مواسير","rental":50,"rentalUnit":"ريال/اليوم","maintenance":"حسب المعاينة","category":"معدات حريق"},
+    {"id":5,"name":"مكنة باركود HDP","rental":200,"rentalUnit":"ريال/اليوم","maintenance":"حسب المعاينة","category":"معدات حريق"},
+    {"id":6,"name":"مكنة ضغط مياه - كهرباء","rental":50,"rentalUnit":"ريال/اليوم","maintenance":"حسب المعاينة","category":"معدات ضغط"},
+    {"id":7,"name":"مكنة ضغط مياه - ديزل","rental":70,"rentalUnit":"ريال/اليوم","maintenance":"حسب المعاينة","category":"معدات ضغط"},
+    {"id":8,"name":"مكنة HDP راس في راس","rental":200,"rentalUnit":"ريال/اليوم","maintenance":"حسب المعاينة","category":"معدات HDP"},
+    {"id":9,"name":"مولد كهرباء 3 كيلو","rental":100,"rentalUnit":"ريال/اليوم","maintenance":"حسب المعاينة","category":"مولدات"},
+    {"id":10,"name":"مقص 8 بوصة لقص المواسير الحديد","rental":100,"rentalUnit":"ريال/اليوم","maintenance":"حسب المعاينة","category":"معدات قص"}
+  ]
+}

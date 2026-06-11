@@ -1,0 +1,7 @@
+node_modules
+auth_info
+orders.db
+orders.db-shm
+orders.db-wal
+*.log
+.env
