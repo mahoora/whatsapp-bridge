@@ -35,23 +35,25 @@ function loadCreds() {
   console.log('Loaded creds from env');
 }
 
-function saveCredsToEnv() {
-  const key = process.env.RENDER_API_KEY;
+function renderUpdateEnv(keyName, value) {
+  const apiKey = process.env.RENDER_API_KEY;
   const sid = process.env.RENDER_SERVICE_ID;
-  if (!key || !sid) return;
-  const p = path.join(AUTH_DIR, 'creds.json');
-  if (!fs.existsSync(p)) return;
-  const b64 = fs.readFileSync(p).toString('base64');
-  const body = JSON.stringify({ envVars: [{ key: 'CREDS_JSON', value: b64 }] });
+  if (!apiKey || !sid) return;
+  const body = JSON.stringify({ value });
   const opts = {
-    hostname: 'api.render.com', path: '/v1/services/' + sid + '/env-vars',
+    hostname: 'api.render.com', path: '/v1/services/' + sid + '/env-vars/' + keyName,
     method: 'PUT', timeout: 10000,
-    headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' }
+    headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' }
   };
   const req = https.request(opts, res => { res.resume(); });
   req.on('error', () => {});
   req.write(body);
   req.end();
+}
+function saveCredsToEnv() {
+  const p = path.join(AUTH_DIR, 'creds.json');
+  if (!fs.existsSync(p)) return;
+  renderUpdateEnv('CREDS_JSON', fs.readFileSync(p).toString('base64'));
 }
 
 loadCreds();
@@ -80,8 +82,9 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدا
 '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال/اليوم\n\n' +
 '** تعليمات الرد **\n' +
 '- عندك معرفة عامة في كل المجالات\n' +
-'- رد بنفس لهجة اللي كلمك (يمني، مصري، سعودي، شامي، عراقي، خليجي)\n' +
+'- للعائلة: رد بنفس لهجة اللي كلمك\n' +
 '- العربية الفصحى ممنوع. رد بالعامية فقط\n' +
+'- **العملاء (غير العائلة): رد باللهجة المصرية فقط**\n' +
 '- إذا سأل عن منتج: قول اسمه وسعره من القائمة\n' +
 '- إذا سأل عن الإيجار: قول سعر اليوم\n' +
 '- تصليح أو قطع غيار: "موجود كل حاجة إن شاء الله، جيبها الورشة"\n' +
@@ -187,22 +190,8 @@ function saveHistory() {
   }
   const str = JSON.stringify(obj);
   fs.writeFileSync(HISTORY_FILE, str);
-  // Also save to Render env var for persistence
-  try {
-    if (process.env.RENDER_API_KEY && process.env.RENDER_SERVICE_ID) {
-      const b64 = Buffer.from(str).toString('base64');
-      const body = JSON.stringify({ envVars: [{ key: 'HISTORY_JSON', value: b64 }] });
-      const opts = {
-        hostname: 'api.render.com', path: '/v1/services/' + process.env.RENDER_SERVICE_ID + '/env-vars',
-        method: 'PUT', timeout: 10000,
-        headers: { 'Authorization': 'Bearer ' + process.env.RENDER_API_KEY, 'Content-Type': 'application/json' }
-      };
-      const req = https.request(opts, res => { res.resume(); });
-      req.on('error', () => {});
-      req.write(body);
-      req.end();
-    }
-  } catch (e) {}
+  try { renderUpdateEnv('HISTORY_JSON', Buffer.from(str).toString('base64')); }
+  catch (e) {}
 }
 
 async function startBridge() {
@@ -300,7 +289,7 @@ async function startBridge() {
           history.push({ role: 'assistant', content: replyText });
           if (history.length > MAX_HISTORY) history.shift();
           saveHistory();
-          if (isVoice) {
+          if (isVoice && !family) {
             try {
               const audioUrl = tts.getAudioUrl(replyText, { lang: 'ar', slow: false });
               const buf = await new Promise((r, j) => {
