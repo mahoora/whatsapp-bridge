@@ -11,7 +11,15 @@ const path = require('path');
 const FormData = require('form-data');
 const tts = require('google-tts-api');
 
+const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+
+// Keep Render awake: ping every 10 minutes
+function startKeepAlive() {
+  setInterval(() => {
+    https.get(RENDER_URL + '/status', res => { res.resume(); }).on('error', () => {});
+  }, 600000);
+}
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
@@ -75,9 +83,10 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدا
 '- إذا سأل العميل عن منتج معين: اذكر اسم المنتج وسعره بالضبط من القائمة\n' +
 '- إذا سأل عن الإيجار: اذكر السعر لليوم وقل السعر يتغير حسب المدة\n' +
 '- الصيانة: تحتاج معاينة من فني\n' +
+'- إذا سأل عن تصليح أو قطع غيار: قل "موجود كل حاجة إن شاء الله، بس جيبها الورشة للمهندس ماهر البدري"\n' +
 '- إذا طلب العميل طلب: اسأله عن اسمه فقط (عشان تعرف تكتب الفاتورة) واسأله وش يبي بالضبط. لا تسأل عن رقم التلفون لأنه ظاهر عندك من الواتس\n' +
-'- ردودك قصيرة ومختصرة قد السؤال. لا تعرف بنفسك كل مرة (ما تقولش اسمك وشركتك وعنوانك في كل رد). جاوب على قد ما يسألوك فقط\n' +
-'- خلاصة: لو سأل عن منتج، قول السعر بس. لو سأل عن حاجة عامة، جاوب مختصر. لو سأل عنك، عرف بنفسك.\n' +
+'- ردودك قصيرة ومختصرة قد السؤال. لا تعرف بنفسك (ما تقولش اسمك ولا شركتك ولا عنوانك) إلا إذا سألوك عنك.\n' +
+'- لما ترد على أفراد العائلة: لا تعرف بنفسك أبداً هم عارفينك. كلمهم كأنهم أهلك.\n' +
 '- بالعربية فقط. ممنوع كتابة أي كلمة إنجليزية ولا أي لغة ثانية نهائياً\n' +
 '- إذا كان المتصل من العائلة أو الأقارب: رد بطريقة مناسبة حسب صلة القرابة\n' +
 '  * الزوجة: رد رومانسي وحنون\n' +
@@ -249,7 +258,7 @@ async function startBridge() {
       const family = familyContacts.find(f => f.phone && from.includes(f.phone));
       let familyContext = '';
       if (family) {
-        familyContext = ' [معلومة: هذا المتصل هو ' + family.relationship + ' (' + family.name + '). رد عليه كـ ' + family.style + ' وليس كعميل.]';
+        familyContext = ' [هذا من العائلة: ' + family.relationship + ' (' + family.name + '). رد طبيعي بدون تعريف بنفسك، ' + family.style + ']';
       }
 
       try {
@@ -268,14 +277,14 @@ async function startBridge() {
           history.push({ role: 'assistant', content: replyText });
           if (history.length > MAX_HISTORY) history.shift();
           saveHistory();
-          // If original was voice, send audio reply too
+          // If original was voice, also send audio reply
           if (isVoice) {
             try {
               const audioUrl = tts.getAudioUrl(replyText, { lang: 'ar', slow: false });
               const audioResp = await new Promise((resolve, reject) => {
                 https.get(audioUrl, res => { const chunks = []; res.on('data', c => chunks.push(c)); res.on('end', () => resolve(Buffer.concat(chunks))); res.on('error', reject); });
               });
-              await sock.sendMessage(from, { audio: audioResp, mimetype: 'audio/mpeg', ptt: true });
+              await sock.sendMessage(from, { audio: audioResp, mimetype: 'audio/mpeg' });
             } catch (e) { console.error('TTS error: ' + e.message); }
           }
           console.log('Replied: ' + replyText.substring(0, 50));
@@ -378,4 +387,5 @@ async function startBridge() {
   });
 }
 
+startKeepAlive();
 startBridge().catch(console.error);
