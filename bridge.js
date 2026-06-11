@@ -291,9 +291,14 @@ async function startBridge() {
           saveHistory();
           if (isVoice && !family) {
             try {
-              const chunks = await tts.getAllAudioBase64(replyText, { lang: 'ar', slow: false });
-              const buf = Buffer.concat(chunks.map(c => Buffer.from(c.base64, 'base64')));
-              await sock.sendMessage(from, { audio: buf, mimetype: 'audio/mpeg', ptt: true });
+              const text = replyText.substring(0, 200);
+              const q = encodeURIComponent(text);
+              const buf = await new Promise((r, j) => {
+                const opts = { hostname: 'translate.google.com', path: '/translate_tts?ie=UTF-8&q=' + q + '&tl=ar&client=tw-ob', method: 'GET', timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } };
+                https.get(opts, res => { const d = []; res.on('data', c => d.push(c)); res.on('end', () => r(Buffer.concat(d))); res.on('error', j); }).on('error', j);
+              });
+              console.log('TTS: got ' + buf.length + ' bytes');
+              await sock.sendMessage(from, { audio: buf, mimetype: 'audio/mpeg' });
             } catch (e) { console.error('TTS error: ' + e.message); }
           }
           console.log('Replied: ' + replyText.substring(0, 50));
