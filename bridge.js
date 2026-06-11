@@ -305,18 +305,10 @@ async function startBridge() {
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr && qr !== latestQr) {
       latestQr = qr;
-      console.log('\n========================================');
-      console.log('  امسح QR code هذا بالواتساب');
-      console.log('========================================\n');
       qrcode.generate(qr, { small: true });
     }
     if (connection === 'open') {
       console.log('WhatsApp connected! ' + (sock.user?.id || ''));
-    }
-    if (connection === 'close') {
-      console.log('WhatsApp disconnected. Reason: ' + (lastDisconnect?.error?.message || 'unknown'));
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      if (shouldReconnect) startBridge();
     }
   });
 
