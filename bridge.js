@@ -79,8 +79,21 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدا
 '  * الأخت: اسأل عن أحوالها وأولادها واطمئنان\n' +
 '  * الأخ: أسئلة شخصية واطمئنان وسلام\n' +
 '  * أولاد الإخوة: رد حنون مناسب\n' +
-'  * الأم/الأب: رد مليء بالاحترام والبر\n' +
-'  * بشكل عام: ليسوا عملاء، رد بطريقة أسرية';
+  '  * الأم/الأب: رد مليء بالاحترام والبر\n' +
+  '  * بشكل عام: ليسوا عملاء، رد بطريقة أسرية\n\n' +
+  '** قائمة العائلة **\n' +
+  '- الزوجة: ام سعاد - ناديها "يا مزتي" أو "يا حياتي"\n' +
+  '- الابنة الكبرى: سعاد (سوسه) - ناديها "سوسه" أو "يا بعدي"\n' +
+  '- الابنة الوسطى: ايه (ايويه) - ناديها "ايويه" أو "يا قمر"\n' +
+  '- الابن الصغير: نورا - ناديها "نورا"\n' +
+  '- الابن: حوده - ناديه "حوده"\n' +
+  '- الأخت الكبرى: ام السعيد - ناديها "يا أختي"\n' +
+  '- الأخت الوسطى: ام ياسمين - ناديها "يا أختي"\n' +
+  '- الأخت الصغرى: ام ملك - ناديها "يا أختي"\n' +
+  '- بنت الأخت: بطه - ناديها "بطه" أو "يا بنتي"\n' +
+  '- بنت الأخت: بوبس - ناديها "بوبس" أو "يا بنتي"\n' +
+  '- بنت الأخت: هيومه - ناديها "هيومه" أو "يا بنتي"\n' +
+  '- الأخ: ابو عماد - ناديه "يا أخوي" أو "بو عماد"';
 
 function callGroq(messages) {
   return new Promise((resolve, reject) => {
@@ -104,10 +117,27 @@ function callGroq(messages) {
   });
 }
 
-// Conversation memory: keep last 30 messages per user
-const conversationHistory = new Map();
+// Persistent conversation memory: saved to file, survives restarts
+const HISTORY_FILE = './conversation-history.json';
 const MAX_HISTORY = 30;
+let conversationHistory = loadHistory();
 let familyContacts = loadFamilyContacts();
+
+function loadHistory() {
+  try {
+    const data = JSON.parse(fs.readFileSync(HISTORY_FILE));
+    return new Map(Object.entries(data));
+  } catch (e) {
+    return new Map();
+  }
+}
+function saveHistory() {
+  const obj = {};
+  for (const [key, val] of conversationHistory) {
+    obj[key] = val;
+  }
+  fs.writeFileSync(HISTORY_FILE, JSON.stringify(obj));
+}
 
 async function startBridge() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -165,6 +195,7 @@ async function startBridge() {
       const history = conversationHistory.get(from);
       history.push({ role: 'user', content: text });
       if (history.length > MAX_HISTORY) history.shift();
+      saveHistory();
 
       // Check if sender is family
       const family = familyContacts.find(f => f.phone && from.includes(f.phone));
@@ -188,6 +219,7 @@ async function startBridge() {
           await sock.sendMessage(from, { text: replyText });
           history.push({ role: 'assistant', content: replyText });
           if (history.length > MAX_HISTORY) history.shift();
+          saveHistory();
           console.log('Replied: ' + replyText.substring(0, 50));
         }
       } catch (err) {
