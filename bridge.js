@@ -194,6 +194,101 @@ function saveHistory() {
   catch (e) {}
 }
 
+const app = express();
+app.use(express.json());
+let currentSock = null;
+
+app.post('/send', async (req, res) => {
+  const { to, text } = req.body;
+  if (!to || !text) return res.status(400).json({ error: 'Missing fields' });
+  try {
+    await currentSock.sendMessage(to, { text });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/status', (req, res) => {
+  res.json({ connected: currentSock && currentSock.user ? true : false, user: currentSock?.user?.id || null });
+});
+
+app.get('/qr', async (req, res) => {
+  if (!latestQr) return res.status(404).send('No QR available yet. Wait for the bridge to start.');
+  res.setHeader('Content-Type', 'image/png');
+  res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
+});
+
+app.post('/order', async (req, res) => {
+  const { customerName, customerPhone, items, notes, totalPrice } = req.body;
+  if (!customerName || !customerPhone || !items) {
+    return res.status(400).json({ error: 'Missing required fields: customerName, customerPhone, items' });
+  }
+  try {
+    const order = ordersDb.createOrder({ customerName, customerPhone, items, notes, totalPrice });
+    const summary = `🛒 طلب جديد #${order.id}\nالعميل: ${customerName}\nالهاتف: ${customerPhone}\nالمنتجات: ${items.map(i => i.name).join('، ')}\nالإجمالي: ${totalPrice || 'يحتسب'} ريال\nالحالة: قيد المراجعة`;
+    currentSock.sendMessage(ADMIN_JID, { text: summary }).catch(() => {});
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/get-creds', (req, res) => {
+  try {
+    const p = path.join(AUTH_DIR, 'creds.json');
+    if (!fs.existsSync(p)) return res.json({ creds: null });
+    res.json({ creds: fs.readFileSync(p).toString('base64') });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/orders', (req, res) => {
+  const { status } = req.query;
+  res.json(ordersDb.listOrders(status));
+});
+
+app.get('/orders/:id', (req, res) => {
+  const order = ordersDb.getOrder(Number(req.params.id));
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+  res.json(order);
+});
+
+app.patch('/orders/:id/status', (req, res) => {
+  const { status } = req.body;
+  if (!['pending', 'confirmed', 'cancelled'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid status. Use: pending, confirmed, cancelled' });
+  }
+  const order = ordersDb.setOrderStatus(Number(req.params.id), status);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+  res.json(order);
+});
+
+app.get('/family', (req, res) => {
+  res.json(familyContacts);
+});
+
+app.post('/family', (req, res) => {
+  const { phone, name, relationship, style } = req.body;
+  if (!phone || !name || !relationship) return res.status(400).json({ error: 'Missing fields: phone, name, relationship' });
+  const contact = { phone, name, relationship, style: style || 'custom' };
+  familyContacts = familyContacts.filter(f => f.phone !== phone);
+  familyContacts.push(contact);
+  saveFamilyContacts(familyContacts);
+  res.json(contact);
+});
+
+app.delete('/family/:phone', (req, res) => {
+  const phone = req.params.phone;
+  familyContacts = familyContacts.filter(f => f.phone !== phone);
+  saveFamilyContacts(familyContacts);
+  res.json({ success: true });
+});
+
+app.get('/', (req, res) => {
+  const connected = currentSock && currentSock.user ? true : false;
+  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${connected ? 'connected' : 'disconnected'}"><h2>${connected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${connected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!connected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
+});
+
 async function startBridge() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
@@ -203,6 +298,7 @@ async function startBridge() {
     logger: pino({ level: 'silent' }),
     browser: ['Chrome', 'Chrome', '120.0'],
   });
+  currentSock = sock;
 
   sock.ev.on('creds.update', () => { saveCreds(); saveCredsToEnv(); });
 
@@ -211,9 +307,6 @@ async function startBridge() {
       latestQr = qr;
       console.log('\n========================================');
       console.log('  امسح QR code هذا بالواتساب');
-      console.log('========================================');
-      console.log('افتح الرابط في المتصفح:');
-      console.log('/qr');
       console.log('========================================\n');
       qrcode.generate(qr, { small: true });
     }
@@ -240,7 +333,6 @@ async function startBridge() {
       const from = msg.key.remoteJid;
       let sender = msg.pushName || 'Unknown';
 
-      // Handle voice messages
       const audioMsg = msg.message?.audioMessage;
       let isVoice = false;
       if (audioMsg && !text) {
@@ -257,7 +349,6 @@ async function startBridge() {
 
       if (!text) continue;
 
-      // Get or create conversation history for this user
       if (!conversationHistory.has(from)) {
         conversationHistory.set(from, []);
       }
@@ -266,7 +357,6 @@ async function startBridge() {
       if (history.length > MAX_HISTORY) history.shift();
       saveHistory();
 
-      // Check if sender is family
       const family = familyContacts.find(f => f.phone && from.includes(f.phone));
       let familyContext = '';
       if (family) {
@@ -274,14 +364,12 @@ async function startBridge() {
       }
 
       try {
-        // Prepare messages for Groq: system + history + current message
         const groqMessages = [
           { role: 'system', content: SYSTEM_PROMPT },
-          ...history.slice(-10), // last 10 messages for context
+          ...history.slice(-10),
           { role: 'user', content: text + familyContext }
         ];
 
-        // Call Groq directly for the reply
         const replyText = await callGroq(groqMessages);
 
         if (replyText) {
@@ -291,8 +379,8 @@ async function startBridge() {
           saveHistory();
           if (isVoice && !family) {
             try {
-              const text = replyText.substring(0, 200);
-              const url = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(text) + '&tl=ar&client=tw-ob';
+              const t = replyText.substring(0, 200);
+              const url = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(t) + '&tl=ar&client=tw-ob';
               const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
               if (resp.ok) {
                 const buf = Buffer.from(await resp.arrayBuffer());
@@ -309,105 +397,10 @@ async function startBridge() {
       }
     }
   });
-
-  const app = express();
-  app.use(express.json());
-
-  app.post('/send', async (req, res) => {
-    const { to, text } = req.body;
-    if (!to || !text) return res.status(400).json({ error: 'Missing fields' });
-    try {
-      await sock.sendMessage(to, { text });
-      res.json({ success: true });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get('/status', (req, res) => {
-    res.json({ connected: sock.user ? true : false, user: sock.user?.id || null });
-  });
-
-  app.get('/qr', async (req, res) => {
-    if (!latestQr) return res.status(404).send('No QR available yet. Wait for the bridge to start.');
-    res.setHeader('Content-Type', 'image/png');
-    res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
-  });
-
-  app.post('/order', async (req, res) => {
-    const { customerName, customerPhone, items, notes, totalPrice } = req.body;
-    if (!customerName || !customerPhone || !items) {
-      return res.status(400).json({ error: 'Missing required fields: customerName, customerPhone, items' });
-    }
-    try {
-      const order = ordersDb.createOrder({ customerName, customerPhone, items, notes, totalPrice });
-      // Notify admin
-      const summary = `🛒 طلب جديد #${order.id}\nالعميل: ${customerName}\nالهاتف: ${customerPhone}\nالمنتجات: ${items.map(i => i.name).join('، ')}\nالإجمالي: ${totalPrice || 'يحتسب'} ريال\nالحالة: قيد المراجعة`;
-      sock.sendMessage(ADMIN_JID, { text: summary }).catch(() => {});
-      res.json(order);
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get('/get-creds', (req, res) => {
-  try {
-    const p = path.join(AUTH_DIR, 'creds.json');
-    if (!fs.existsSync(p)) return res.json({ creds: null });
-    res.json({ creds: fs.readFileSync(p).toString('base64') });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-app.get('/orders', (req, res) => {
-    const { status } = req.query;
-    res.json(ordersDb.listOrders(status));
-  });
-
-  app.get('/orders/:id', (req, res) => {
-    const order = ordersDb.getOrder(Number(req.params.id));
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-    res.json(order);
-  });
-
-  app.patch('/orders/:id/status', (req, res) => {
-    const { status } = req.body;
-    if (!['pending', 'confirmed', 'cancelled'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid status. Use: pending, confirmed, cancelled' });
-    }
-    const order = ordersDb.setOrderStatus(Number(req.params.id), status);
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-    res.json(order);
-  });
-
-  app.get('/family', (req, res) => {
-    res.json(familyContacts);
-  });
-
-  app.post('/family', (req, res) => {
-    const { phone, name, relationship, style } = req.body;
-    if (!phone || !name || !relationship) return res.status(400).json({ error: 'Missing fields: phone, name, relationship' });
-    const contact = { phone, name, relationship, style: style || 'custom' };
-    familyContacts = familyContacts.filter(f => f.phone !== phone);
-    familyContacts.push(contact);
-    saveFamilyContacts(familyContacts);
-    res.json(contact);
-  });
-
-  app.delete('/family/:phone', (req, res) => {
-    const phone = req.params.phone;
-    familyContacts = familyContacts.filter(f => f.phone !== phone);
-    saveFamilyContacts(familyContacts);
-    res.json({ success: true });
-  });
-
-  app.get('/', (req, res) => {
-    const connected = sock.user ? true : false;
-    res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${connected ? 'connected' : 'disconnected'}"><h2>${connected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${connected ? 'رقم: ' + sock.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!connected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
-  });
-
-  app.listen(BRIDGE_PORT, () => {
-    console.log('Bridge API on http://localhost:' + BRIDGE_PORT);
-  });
 }
 
+app.listen(BRIDGE_PORT, () => {
+  console.log('Bridge API on http://localhost:' + BRIDGE_PORT);
+});
 startKeepAlive();
 startBridge().catch(console.error);
