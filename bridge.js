@@ -355,7 +355,7 @@ async function startBridge() {
       const history = conversationHistory.get(from);
       history.push({ role: 'user', content: text });
       if (history.length > MAX_HISTORY) history.shift();
-      saveHistory();
+      try { saveHistory(); } catch(e) {}
 
       const family = familyContacts.find(f => f.phone && from.includes(f.phone));
       let familyContext = '';
@@ -376,7 +376,7 @@ async function startBridge() {
           await sock.sendMessage(from, { text: replyText });
           history.push({ role: 'assistant', content: replyText });
           if (history.length > MAX_HISTORY) history.shift();
-          saveHistory();
+          try { saveHistory(); } catch(e) {}
           if (isVoice && !family) {
             try {
               const t = replyText.substring(0, 200);
