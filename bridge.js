@@ -291,10 +291,8 @@ async function startBridge() {
           saveHistory();
           if (isVoice && !family) {
             try {
-              const audioUrl = tts.getAudioUrl(replyText, { lang: 'ar', slow: false });
-              const buf = await new Promise((r, j) => {
-                https.get(audioUrl, res => { const d = []; res.on('data', c => d.push(c)); res.on('end', () => r(Buffer.concat(d))); res.on('error', j); });
-              });
+              const chunks = await tts.getAllAudioBase64(replyText, { lang: 'ar', slow: false });
+              const buf = Buffer.concat(chunks.map(c => Buffer.from(c.base64, 'base64')));
               await sock.sendMessage(from, { audio: buf, mimetype: 'audio/mpeg', ptt: true });
             } catch (e) { console.error('TTS error: ' + e.message); }
           }
