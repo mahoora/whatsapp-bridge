@@ -3,6 +3,7 @@ const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whis
 const express = require('express');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const ordersDb = require('./orders-db');
 const https = require('https');
 
@@ -11,6 +12,7 @@ const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
 const ADMIN_JID = process.env.ADMIN_JID || '966595510125@s.whatsapp.net';
+let latestQr = null;
 
 const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدات حريق. تتحدث بالعربية.\n\n' +
 '** مهم جدا: استخدم قائمة المنتجات التالية عند الرد على أسئلة العملاء عن الأسعار أو الإيجار **\n\n' +
@@ -72,12 +74,12 @@ async function startBridge() {
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
-      const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' + encodeURIComponent(qr);
+      latestQr = qr;
       console.log('\n========================================');
       console.log('  امسح QR code هذا بالواتساب');
       console.log('========================================');
-      console.log('افتح الرابط في المتصفح وامسح الصورة بالجوال:');
-      console.log(qrUrl);
+      console.log('افتح الرابط في المتصفح:');
+      console.log('/qr');
       console.log('========================================\n');
       qrcode.generate(qr, { small: true });
       console.log('');
@@ -154,6 +156,12 @@ async function startBridge() {
 
   app.get('/status', (req, res) => {
     res.json({ connected: sock.user ? true : false, user: sock.user?.id || null });
+  });
+
+  app.get('/qr', async (req, res) => {
+    if (!latestQr) return res.status(404).send('No QR available yet. Wait for the bridge to start.');
+    res.setHeader('Content-Type', 'image/png');
+    res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
   });
 
   app.post('/order', async (req, res) => {
