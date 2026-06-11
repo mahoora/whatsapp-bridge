@@ -73,8 +73,12 @@ async function startBridge() {
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
+      const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' + encodeURIComponent(qr);
       console.log('\n========================================');
-      console.log('  SCAN THIS QR CODE WITH WHATSAPP');
+      console.log('  امسح QR code هذا بالواتساب');
+      console.log('========================================');
+      console.log('افتح الرابط في المتصفح وامسح الصورة بالجوال:');
+      console.log(qrUrl);
       console.log('========================================\n');
       qrcode.generate(qr, { small: true });
       console.log('');
