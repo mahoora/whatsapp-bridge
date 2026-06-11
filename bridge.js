@@ -6,7 +6,6 @@ const qrcode = require('qrcode-terminal');
 const ordersDb = require('./orders-db');
 const https = require('https');
 
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/whatsapp-incoming';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
@@ -66,7 +65,7 @@ async function startBridge() {
     printQRInTerminal: true,
     auth: state,
     logger: pino({ level: 'silent' }),
-    browser: ['n8n WhatsApp Bridge', 'Chrome', '120.0'],
+    browser: ['Chrome', 'Chrome', '120.0'],
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -132,33 +131,9 @@ async function startBridge() {
           history.push({ role: 'assistant', content: replyText });
           if (history.length > MAX_HISTORY) history.shift();
           console.log('Replied: ' + replyText.substring(0, 50));
-
-          // Forward to n8n for logging (fire and forget)
-          fetch(N8N_WEBHOOK_URL, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from, sender, message: text, reply: replyText, history: history.slice(-10) })
-          }).catch(() => {});
         }
       } catch (err) {
         console.error('Error: ' + err.message);
-        // Fallback: try n8n if Groq fails
-        try {
-          const response = await fetch(N8N_WEBHOOK_URL, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from, sender, message: text, history: history.slice(-MAX_HISTORY) })
-          });
-          if (response.ok) {
-            const reply = await response.json();
-            const replyText = Array.isArray(reply) ? reply[0]?.text : reply?.text;
-            if (replyText) {
-              await sock.sendMessage(from, { text: replyText });
-              history.push({ role: 'assistant', content: replyText });
-              console.log('Fallback replied: ' + replyText.substring(0, 50));
-            }
-          }
-        } catch(e2) {
-          console.error('Fallback also failed: ' + e2.message);
-        }
       }
     }
   });
