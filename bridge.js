@@ -203,6 +203,7 @@ let lastError = '';
 let lastFrom = '';
 let lastReply = '';
 let restartTimer = null;
+const lidToJid = new Map();
 
 app.post('/send', async (req, res) => {
   const { to, text } = req.body;
@@ -339,6 +340,9 @@ async function startBridge() {
         '';
 
       const from = msg.key.remoteJid;
+      let sendTo = from;
+      if (from.endsWith('@lid') && lidToJid.has(from)) sendTo = lidToJid.get(from);
+      else if (!from.endsWith('@lid') && !from.endsWith('@g.us')) lidToJid.set(from, from);
       let sender = msg.pushName || 'Unknown';
 
       const audioMsg = msg.message?.audioMessage;
@@ -385,7 +389,7 @@ async function startBridge() {
 
         if (replyText) {
           lastReply = replyText.substring(0, 100);
-          await currentSock.sendMessage(from, { text: replyText });
+          await currentSock.sendMessage(sendTo, { text: replyText });
           history.push({ role: 'assistant', content: replyText });
           if (history.length > MAX_HISTORY) history.shift();
           try { saveHistory(); } catch(e) {}
@@ -397,7 +401,7 @@ async function startBridge() {
               if (resp.ok) {
                 const buf = Buffer.from(await resp.arrayBuffer());
                 if (buf.length > 500) {
-                  await currentSock.sendMessage(from, { audio: buf, mimetype: 'audio/mpeg', ptt: true });
+                  await currentSock.sendMessage(sendTo, { audio: buf, mimetype: 'audio/mpeg', ptt: true });
                 }
               }
             } catch (e) { console.error('TTS error: ' + e.message); }
