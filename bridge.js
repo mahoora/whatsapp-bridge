@@ -9,7 +9,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const FormData = require('form-data');
-const tts = require('google-tts-api');
+const { exec } = require('child_process');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
@@ -292,13 +292,14 @@ async function startBridge() {
           if (isVoice && !family) {
             try {
               const text = replyText.substring(0, 200);
-              const q = encodeURIComponent(text);
-              const buf = await new Promise((r, j) => {
-                const opts = { hostname: 'translate.google.com', path: '/translate_tts?ie=UTF-8&q=' + q + '&tl=ar&client=tw-ob', method: 'GET', timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } };
-                https.get(opts, res => { const d = []; res.on('data', c => d.push(c)); res.on('end', () => r(Buffer.concat(d))); res.on('error', j); }).on('error', j);
-              });
-              console.log('TTS: got ' + buf.length + ' bytes');
-              await sock.sendMessage(from, { audio: buf, mimetype: 'audio/mpeg' });
+              const url = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(text) + '&tl=ar&client=tw-ob';
+              const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+              if (resp.ok) {
+                const buf = Buffer.from(await resp.arrayBuffer());
+                if (buf.length > 500) {
+                  await sock.sendMessage(from, { audio: buf, mimetype: 'audio/mpeg', ptt: true });
+                }
+              }
             } catch (e) { console.error('TTS error: ' + e.message); }
           }
           console.log('Replied: ' + replyText.substring(0, 50));
