@@ -119,7 +119,10 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدا
 '3. وحذره: لا تنشر أي صور لمواد السباكة أو الحريق (حديد أو بلاستيك) لأن هذا جروب خاص بالمؤسسة فقط';
 
 function callGroq(messages) {
+  let done = false;
   return new Promise((resolve, reject) => {
+    const safeResolve = (v) => { if (!done) { done = true; resolve(v); } };
+    const safeReject = (e) => { if (!done) { done = true; reject(e); } };
     const data = JSON.stringify({ model: 'llama-3.3-70b-versatile', messages });
     const opts = {
       hostname: 'api.groq.com', path: '/openai/v1/chat/completions',
@@ -130,11 +133,19 @@ function callGroq(messages) {
       let b = '';
       res.on('data', c => b += c);
       res.on('end', () => {
-        try { const j = JSON.parse(b); resolve(j.choices?.[0]?.message?.content || ''); }
-        catch(e) { reject(e); }
+        try {
+          const j = JSON.parse(b);
+          if (res.statusCode !== 200) {
+            console.error('Groq HTTP ' + res.statusCode + ': ' + b.substring(0, 200));
+            safeReject(new Error('Groq ' + res.statusCode));
+            return;
+          }
+          safeResolve(j.choices?.[0]?.message?.content || '');
+        } catch(e) { safeReject(e); }
       });
     });
-    req.on('error', reject);
+    req.on('error', (e) => safeReject(e));
+    req.on('timeout', () => { req.destroy(); safeReject(new Error('Groq timeout')); });
     req.write(data);
     req.end();
   });
@@ -385,29 +396,28 @@ async function startBridge() {
           { role: 'user', content: text + familyContext }
         ];
 
-        const replyText = await callGroq(groqMessages);
+        let replyText = await callGroq(groqMessages);
 
-        if (replyText) {
-          lastReply = replyText.substring(0, 100);
-          await currentSock.sendMessage(sendTo, { text: replyText });
-          history.push({ role: 'assistant', content: replyText });
-          if (history.length > MAX_HISTORY) history.shift();
-          try { saveHistory(); } catch(e) {}
-          if (isVoice && !family) {
-            try {
-              const t = replyText.substring(0, 200);
-              const url = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(t) + '&tl=ar&client=tw-ob';
-              const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-              if (resp.ok) {
-                const buf = Buffer.from(await resp.arrayBuffer());
-                if (buf.length > 500) {
-                  await currentSock.sendMessage(sendTo, { audio: buf, mimetype: 'audio/mpeg', ptt: true });
-                }
+        if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
+        lastReply = replyText.substring(0, 100);
+        await currentSock.sendMessage(sendTo, { text: replyText });
+        history.push({ role: 'assistant', content: replyText });
+        if (history.length > MAX_HISTORY) history.shift();
+        try { saveHistory(); } catch(e) {}
+        if (isVoice && !family) {
+          try {
+            const t = replyText.substring(0, 200);
+            const url = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(t) + '&tl=ar&client=tw-ob';
+            const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+            if (resp.ok) {
+              const buf = Buffer.from(await resp.arrayBuffer());
+              if (buf.length > 500) {
+                await currentSock.sendMessage(sendTo, { audio: buf, mimetype: 'audio/mpeg', ptt: true });
               }
-            } catch (e) { console.error('TTS error: ' + e.message); }
-          }
-          console.log('Replied: ' + replyText.substring(0, 50));
+            }
+          } catch (e) { console.error('TTS error: ' + e.message); }
         }
+        console.log('Replied: ' + replyText.substring(0, 50));
       } catch (err) {
         lastError = err.message;
         console.error('Error: ' + err.message);
