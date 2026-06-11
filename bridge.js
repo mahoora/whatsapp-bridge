@@ -14,10 +14,11 @@ const tts = require('google-tts-api');
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
-// Keep Render awake: ping every 10 minutes
+// Keep Render awake + save history every 5 minutes
 function startKeepAlive() {
   setInterval(() => {
     https.get(RENDER_URL + '/status', res => { res.resume(); }).on('error', () => {});
+    saveHistory();
   }, 600000);
 }
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -171,6 +172,11 @@ function loadHistory() {
     const data = JSON.parse(fs.readFileSync(HISTORY_FILE));
     return new Map(Object.entries(data));
   } catch (e) {
+    // Try loading from env var as fallback
+    try {
+      const envData = process.env.HISTORY_JSON;
+      if (envData) return new Map(Object.entries(JSON.parse(Buffer.from(envData, 'base64').toString())));
+    } catch (e2) {}
     return new Map();
   }
 }
@@ -179,7 +185,24 @@ function saveHistory() {
   for (const [key, val] of conversationHistory) {
     obj[key] = val;
   }
-  fs.writeFileSync(HISTORY_FILE, JSON.stringify(obj));
+  const str = JSON.stringify(obj);
+  fs.writeFileSync(HISTORY_FILE, str);
+  // Also save to Render env var for persistence
+  try {
+    if (process.env.RENDER_API_KEY && process.env.RENDER_SERVICE_ID) {
+      const b64 = Buffer.from(str).toString('base64');
+      const body = JSON.stringify({ envVars: [{ key: 'HISTORY_JSON', value: b64 }] });
+      const opts = {
+        hostname: 'api.render.com', path: '/v1/services/' + process.env.RENDER_SERVICE_ID + '/env-vars',
+        method: 'PUT', timeout: 10000,
+        headers: { 'Authorization': 'Bearer ' + process.env.RENDER_API_KEY, 'Content-Type': 'application/json' }
+      };
+      const req = https.request(opts, res => { res.resume(); });
+      req.on('error', () => {});
+      req.write(body);
+      req.end();
+    }
+  } catch (e) {}
 }
 
 async function startBridge() {
