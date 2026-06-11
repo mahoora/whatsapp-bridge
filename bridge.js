@@ -197,6 +197,7 @@ function saveHistory() {
 const app = express();
 app.use(express.json());
 let currentSock = null;
+let wsConnected = false;
 
 app.post('/send', async (req, res) => {
   const { to, text } = req.body;
@@ -210,7 +211,7 @@ app.post('/send', async (req, res) => {
 });
 
 app.get('/status', (req, res) => {
-  res.json({ connected: currentSock && currentSock.user ? true : false, user: currentSock?.user?.id || null });
+  res.json({ connected: wsConnected, user: currentSock?.user?.id || null });
 });
 
 app.get('/qr', async (req, res) => {
@@ -285,8 +286,7 @@ app.delete('/family/:phone', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  const connected = currentSock && currentSock.user ? true : false;
-  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${connected ? 'connected' : 'disconnected'}"><h2>${connected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${connected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!connected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
+  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!wsConnected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
 });
 
 async function startBridge() {
@@ -302,13 +302,23 @@ async function startBridge() {
 
   sock.ev.on('creds.update', () => { saveCreds(); saveCredsToEnv(); });
 
+  let reconnectTimer = null;
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr && qr !== latestQr) {
+    if (qr) {
       latestQr = qr;
       qrcode.generate(qr, { small: true });
     }
     if (connection === 'open') {
+      wsConnected = true;
       console.log('WhatsApp connected! ' + (sock.user?.id || ''));
+    }
+    if (connection === 'close') {
+      wsConnected = false;
+      const reason = lastDisconnect?.error?.output?.statusCode;
+      console.log('Disconnected. Reason: ' + (lastDisconnect?.error?.message || 'unknown'));
+      if (reason !== DisconnectReason.loggedOut && !reconnectTimer) {
+        reconnectTimer = setTimeout(() => { reconnectTimer = null; startBridge(); }, 5000);
+      }
     }
   });
 
