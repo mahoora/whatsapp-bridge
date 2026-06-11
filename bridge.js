@@ -198,6 +198,8 @@ const app = express();
 app.use(express.json());
 let currentSock = null;
 let wsConnected = false;
+let msgCount = 0;
+let lastError = '';
 
 app.post('/send', async (req, res) => {
   const { to, text } = req.body;
@@ -285,6 +287,9 @@ app.delete('/family/:phone', (req, res) => {
   res.json({ success: true });
 });
 
+app.get('/diag', (req, res) => {
+  res.json({ msgCount, lastError, wsConnected, user: currentSock?.user?.id });
+});
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!wsConnected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
 });
@@ -323,7 +328,7 @@ async function startBridge() {
   });
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
-    for (const msg of messages) {
+    try { for (const msg of messages) {
       if (!msg.key || msg.key.fromMe) continue;
       if (msg.key.remoteJid.endsWith('@g.us')) continue;
 
@@ -350,6 +355,8 @@ async function startBridge() {
       }
 
       if (!text) continue;
+
+      msgCount++;
 
       if (!conversationHistory.has(from)) {
         conversationHistory.set(from, []);
@@ -395,9 +402,10 @@ async function startBridge() {
           console.log('Replied: ' + replyText.substring(0, 50));
         }
       } catch (err) {
+        lastError = err.message;
         console.error('Error: ' + err.message);
       }
-    }
+    } } catch(e) { lastError = 'FATAL: ' + e.message; console.error('FATAL: ' + e.message); }
   });
 }
 
