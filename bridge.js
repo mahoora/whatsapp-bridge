@@ -357,7 +357,14 @@ async function startBridge() {
     }
   });
 
-  app.get('/orders', (req, res) => {
+  app.get('/get-creds', (req, res) => {
+  try {
+    const p = path.join(AUTH_DIR, 'creds.json');
+    if (!fs.existsSync(p)) return res.json({ creds: null });
+    res.json({ creds: fs.readFileSync(p).toString('base64') });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/orders', (req, res) => {
     const { status } = req.query;
     res.json(ordersDb.listOrders(status));
   });
