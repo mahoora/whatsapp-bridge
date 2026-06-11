@@ -202,6 +202,7 @@ let msgCount = 0;
 let lastError = '';
 let lastFrom = '';
 let lastReply = '';
+let restartTimer = null;
 
 app.post('/send', async (req, res) => {
   const { to, text } = req.body;
@@ -321,6 +322,9 @@ async function startBridge() {
     if (connection === 'close') {
       wsConnected = false;
       console.log('Disconnected. Reason: ' + (lastDisconnect?.error?.message || 'unknown'));
+      if (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut && !restartTimer) {
+        restartTimer = setTimeout(() => { restartTimer = null; startBridge(); }, 10000);
+      }
     }
   });
 
