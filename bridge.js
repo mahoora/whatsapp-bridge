@@ -6,6 +6,8 @@ const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const ordersDb = require('./orders-db');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -13,6 +15,35 @@ const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
 const ADMIN_JID = process.env.ADMIN_JID || '966595510125@s.whatsapp.net';
 let latestQr = null;
+
+function loadCreds() {
+  const v = process.env.CREDS_JSON;
+  if (!v) return;
+  if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+  fs.writeFileSync(path.join(AUTH_DIR, 'creds.json'), Buffer.from(v, 'base64'));
+  console.log('Loaded creds from env');
+}
+
+function saveCredsToEnv() {
+  const key = process.env.RENDER_API_KEY;
+  const sid = process.env.RENDER_SERVICE_ID;
+  if (!key || !sid) return;
+  const p = path.join(AUTH_DIR, 'creds.json');
+  if (!fs.existsSync(p)) return;
+  const b64 = fs.readFileSync(p).toString('base64');
+  const body = JSON.stringify({ envVars: [{ key: 'CREDS_JSON', value: b64 }] });
+  const opts = {
+    hostname: 'api.render.com', path: '/v1/services/' + sid + '/env-vars',
+    method: 'PUT', timeout: 10000,
+    headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' }
+  };
+  const req = https.request(opts, res => { res.resume(); });
+  req.on('error', () => {});
+  req.write(body);
+  req.end();
+}
+
+loadCreds();
 
 const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدات حريق. تتحدث بالعربية.\n\n' +
 '** مهم جدا: استخدم قائمة المنتجات التالية عند الرد على أسئلة العملاء عن الأسعار أو الإيجار **\n\n' +
@@ -70,7 +101,7 @@ async function startBridge() {
     browser: ['Chrome', 'Chrome', '120.0'],
   });
 
-  sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('creds.update', () => { saveCreds(); saveCredsToEnv(); });
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr && qr !== latestQr) {
