@@ -73,7 +73,7 @@ async function startBridge() {
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
+    if (qr && qr !== latestQr) {
       latestQr = qr;
       console.log('\n========================================');
       console.log('  امسح QR code هذا بالواتساب');
@@ -82,12 +82,12 @@ async function startBridge() {
       console.log('/qr');
       console.log('========================================\n');
       qrcode.generate(qr, { small: true });
-      console.log('');
     }
     if (connection === 'open') {
-      console.log('WhatsApp connected!');
+      console.log('WhatsApp connected! ' + (sock.user?.id || ''));
     }
     if (connection === 'close') {
+      console.log('WhatsApp disconnected. Reason: ' + (lastDisconnect?.error?.message || 'unknown'));
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       if (shouldReconnect) startBridge();
     }
@@ -199,6 +199,11 @@ async function startBridge() {
     const order = ordersDb.setOrderStatus(Number(req.params.id), status);
     if (!order) return res.status(404).json({ error: 'Order not found' });
     res.json(order);
+  });
+
+  app.get('/', (req, res) => {
+    const connected = sock.user ? true : false;
+    res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${connected ? 'connected' : 'disconnected'}"><h2>${connected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${connected ? 'رقم: ' + sock.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!connected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
   });
 
   app.listen(BRIDGE_PORT, () => {
