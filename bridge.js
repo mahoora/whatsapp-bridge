@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
@@ -8,6 +8,8 @@ const ordersDb = require('./orders-db');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const FormData = require('form-data');
+const tts = require('google-tts-api');
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -68,11 +70,12 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدا
 '9. مولد كهرباء 3 كيلو ← 100 ريال/اليوم\n' +
 '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال/اليوم\n\n' +
 '** تعليمات الرد **\n' +
+'- عندك معرفة عامة في كل المجالات - الدين، التاريخ، العلوم، التكنولوجيا، الطبخ، الرياضة، أي سؤال جاوب عليه\n' +
 '- حدد لهجة الرسالة الواردة ورد بنفس اللهجة (يمني، مصري، سعودي، شامي، عراقي، خليجي، إلخ)\n' +
 '- إذا سأل العميل عن منتج معين: اذكر اسم المنتج وسعره بالضبط من القائمة\n' +
 '- إذا سأل عن الإيجار: اذكر السعر لليوم وقل السعر يتغير حسب المدة\n' +
 '- الصيانة: تحتاج معاينة من فني\n' +
-'- إذا طلب العميل طلب: اسأل عن المنتج والمدة واسمه ورقم هاتفه\n' +
+'- إذا طلب العميل طلب: اسأله عن اسمه فقط (عشان تعرف تكتب الفاتورة) واسأله وش يبي بالضبط. لا تسأل عن رقم التلفون لأنه ظاهر عندك من الواتس\n' +
 '- ردودك مختصرة ومفيدة وبالعربية فقط\n' +
 '- إذا كان المتصل من العائلة أو الأقارب: رد بطريقة مناسبة حسب صلة القرابة\n' +
 '  * الزوجة: رد رومانسي وحنون\n' +
@@ -128,6 +131,30 @@ const MAX_HISTORY = 30;
 let conversationHistory = loadHistory();
 let familyContacts = loadFamilyContacts();
 
+function transcribeAudio(audioBuffer) {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append('file', audioBuffer, { filename: 'audio.ogg', contentType: 'audio/ogg' });
+    form.append('model', 'whisper-large-v3-turbo');
+    form.append('language', 'ar');
+    const opts = {
+      hostname: 'api.groq.com', path: '/openai/v1/audio/transcriptions',
+      method: 'POST', timeout: 30000,
+      headers: form.getHeaders({ 'Authorization': 'Bearer ' + GROQ_API_KEY })
+    };
+    const req = https.request(opts, res => {
+      let b = '';
+      res.on('data', c => b += c);
+      res.on('end', () => {
+        try { const j = JSON.parse(b); resolve(j.text || ''); }
+        catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    form.pipe(req);
+  });
+}
+
 function loadHistory() {
   try {
     const data = JSON.parse(fs.readFileSync(HISTORY_FILE));
@@ -182,16 +209,30 @@ async function startBridge() {
       if (!msg.key || msg.key.fromMe) continue;
       if (msg.key.remoteJid.endsWith('@g.us')) continue;
 
-      const text = msg.message?.conversation ||
+      let text = msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
         msg.message?.imageMessage?.caption ||
         '';
 
-      if (!text) continue;
-
       const from = msg.key.remoteJid;
-      const sender = msg.pushName || 'Unknown';
-      console.log('From ' + sender + ': ' + text);
+      let sender = msg.pushName || 'Unknown';
+
+      // Handle voice messages
+      const audioMsg = msg.message?.audioMessage;
+      let isVoice = false;
+      if (audioMsg && !text) {
+        isVoice = true;
+        try {
+          const buffer = await downloadMediaMessage(msg, 'buffer', {});
+          text = await transcribeAudio(buffer);
+          console.log('Voice from ' + sender + ': ' + text);
+        } catch (e) {
+          console.error('Voice error: ' + e.message);
+          continue;
+        }
+      }
+
+      if (!text) continue;
 
       // Get or create conversation history for this user
       if (!conversationHistory.has(from)) {
@@ -225,6 +266,16 @@ async function startBridge() {
           history.push({ role: 'assistant', content: replyText });
           if (history.length > MAX_HISTORY) history.shift();
           saveHistory();
+          // If original was voice, send audio reply too
+          if (isVoice) {
+            try {
+              const audioUrl = tts.getAudioUrl(replyText, { lang: 'ar', slow: false });
+              const audioResp = await new Promise((resolve, reject) => {
+                https.get(audioUrl, res => { const chunks = []; res.on('data', c => chunks.push(c)); res.on('end', () => resolve(Buffer.concat(chunks))); res.on('error', reject); });
+              });
+              await sock.sendMessage(from, { audio: audioResp, mimetype: 'audio/mpeg', ptt: true });
+            } catch (e) { console.error('TTS error: ' + e.message); }
+          }
           console.log('Replied: ' + replyText.substring(0, 50));
         }
       } catch (err) {
