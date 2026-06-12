@@ -716,32 +716,38 @@ async function startBridge() {
       // Cooldown: wait 4s between AI calls
       const since = Date.now() - lastAiCall;
       if (since < 4000) await new Promise(r => setTimeout(r, 4000 - since));
-      // Try Groq once
-      try {
-        const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
-        for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
-        msgs.push({ role: 'user', content: familyContext + '\n' + text });
-        const c2 = new AbortController();
-        const t2 = setTimeout(() => c2.abort(), 30000);
-        const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
-          signal: c2.signal
-        });
-        clearTimeout(t2);
-        if (r2.status === 200) {
-          const j2 = await r2.json();
-          replyText = j2.choices?.[0]?.message?.content || '';
-          lastBranch = 'GROQ_OK';
-        } else {
-          lastGroqError = 'GROQ HTTP ' + r2.status;
-          if (r2.status === 429) lastGroq429 = Date.now();
+      // إذا Groq مرجّع 429 خلال آخر 65 ثانية، نتخطاه
+      const groqCooldown = Date.now() - lastGroq429 < 65000;
+      if (!groqCooldown) {
+        try {
+          const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
+          for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
+          msgs.push({ role: 'user', content: familyContext + '\n' + text });
+          const c2 = new AbortController();
+          const t2 = setTimeout(() => c2.abort(), 30000);
+          const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+            signal: c2.signal
+          });
+          clearTimeout(t2);
+          if (r2.status === 200) {
+            const j2 = await r2.json();
+            replyText = j2.choices?.[0]?.message?.content || '';
+            lastBranch = 'GROQ_OK';
+            lastGroq429 = 0;
+          } else {
+            lastGroqError = 'GROQ HTTP ' + r2.status;
+            if (r2.status === 429) lastGroq429 = Date.now();
+          }
+        } catch (err) {
+          lastGroqError = err.message;
+          if (!lastError) lastError = err.message;
+          console.error('Groq error: ' + err.message);
         }
-      } catch (err) {
-        lastGroqError = err.message;
-        if (!lastError) lastError = err.message;
-        console.error('Groq error: ' + err.message);
+      } else {
+        lastGroqError = 'SKIP 429';
       }
       if (!replyText) replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
       if (replyText) lastBranch = 'GEMINI_OK';
