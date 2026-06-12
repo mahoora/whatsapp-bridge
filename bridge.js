@@ -547,24 +547,6 @@ async function startBridge() {
         continue;
       }
 
-      const greetings = ['هلا', 'هلاو', 'السلام عليكم', 'السلام عليكو', 'سلام عليكم', 'سلام', 'مرحبا', 'اهلا', 'أهلا', 'هاي', 'هاي'];
-      if (greetings.includes(tlow) || tlow.startsWith('السلام عليكم') || tlow.startsWith('سلام عليكم')) {
-        const family = familyContacts.find(f => f.phone && (from.includes(f.phone) || senderPhone.includes(f.phone)));
-        if (family) {
-          const rel = family.relationship;
-          const greet = rel.includes('زوج') ? 'هلا يا مزتي' : rel.includes('أخت') ? 'هلا أختي' : rel.includes('أخ') ? 'هلا أخوي' : rel.includes('بنت') ? 'هلا بنتي' : 'هلا';
-          replyText = greet + '، عامل إيه؟';
-        } else {
-          replyText = 'وعليكم السلام ورحمة الله وبركاته. مرحبًا بكم في ورشة ماهر البدري لمعدات السلامة من الحريق. أنا تحت أمرك، أيه اللي تطلبه؟';
-        }
-        lastReply = replyText.substring(0, 100);
-        await sock.sendMessage(sendTo, { text: replyText });
-        history.push({ role: 'assistant', content: replyText });
-        if (history.length > MAX_HISTORY) history.shift();
-        try { saveHistory(); } catch(e) {}
-        continue;
-      }
-
       const family = familyContacts.find(f => f.phone && (from.includes(f.phone) || senderPhone.includes(f.phone)));
       let familyContext = '';
       if (family) {
