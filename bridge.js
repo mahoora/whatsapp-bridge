@@ -603,39 +603,54 @@ async function startBridge() {
 
       lastBranch = 'AI_CALL';
       pushNameVal = msg.pushName || '(none)';
+      let replyText = '';
       try {
-        let replyText = await callAI(SYSTEM_PROMPT, history.slice(-10, -1), familyContext + '\n' + text);
-
-        if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
-        lastReply = replyText.substring(0, 100);
-        await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
-        await sock.sendMessage(ADMIN_JID, { text: replyText }).catch(() => {});
-        lastError = '';
-        history.push({ role: 'assistant', content: replyText });
-        if (history.length > MAX_HISTORY) history.shift();
-        try { saveHistory(); } catch(e) {}
-        if (isVoice && !family) {
-          try {
-            const t = replyText.substring(0, 200);
-            const url = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(t) + '&tl=ar&client=tw-ob';
-            const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-            if (resp.ok) {
-              const buf = Buffer.from(await resp.arrayBuffer());
-              if (buf.length > 500) {
-                await sock.sendMessage(sendTo, { audio: buf, mimetype: 'audio/mpeg' });
-              }
-            }
-          } catch (e) { console.error('TTS error: ' + e.message); }
+        const c2 = new AbortController();
+        const t2 = setTimeout(() => c2.abort(), 30000);
+        const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
+        const h = history.slice(-10, -1);
+        for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
+        msgs.push({ role: 'user', content: familyContext + '\n' + text });
+        const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+          signal: c2.signal
+        });
+        clearTimeout(t2);
+        if (r2.status === 200) {
+          const j2 = await r2.json();
+          replyText = j2.choices?.[0]?.message?.content || '';
+        } else {
+          lastError = 'AI HTTP ' + r2.status;
+          console.error('AI error: ' + r2.status);
         }
-        console.log('Replied: ' + replyText.substring(0, 50));
       } catch (err) {
-        lastBranch = 'AI_ERROR';
         lastError = err.message;
-        console.error('Error: ' + err.message);
-        try {
-          await sock.sendMessage(sendTo, { text: 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.' });
-        } catch(e2) {}
+        console.error('AI fetch error: ' + err.message);
       }
+
+      if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
+      lastReply = replyText.substring(0, 100);
+      await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
+      await sock.sendMessage(ADMIN_JID, { text: replyText }).catch(() => {});
+      history.push({ role: 'assistant', content: replyText });
+      if (history.length > MAX_HISTORY) history.shift();
+      try { saveHistory(); } catch(e) {}
+      if (isVoice && !family) {
+        try {
+          const t = replyText.substring(0, 200);
+          const url = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(t) + '&tl=ar&client=tw-ob';
+          const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+          if (resp.ok) {
+            const buf = Buffer.from(await resp.arrayBuffer());
+            if (buf.length > 500) {
+              await sock.sendMessage(sendTo, { audio: buf, mimetype: 'audio/mpeg' });
+            }
+          }
+        } catch (e) { console.error('TTS error: ' + e.message); }
+      }
+      console.log('Replied: ' + replyText.substring(0, 50));
     } } catch(e) { lastError = 'FATAL: ' + e.message; console.error('FATAL: ' + e.message); }
   });
 }
