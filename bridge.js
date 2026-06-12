@@ -735,7 +735,7 @@ async function startBridge() {
               break;
             }
             if (r2.status === 429 && tries < 2) {
-              const wait = tries === 0 ? 30000 : 60000;
+              const wait = tries === 0 ? 5000 : 10000;
               console.error('Groq 429, retry ' + (tries+1) + ' in ' + wait + 'ms');
               lastError = 'GROQ 429 RETRY ' + (tries+1);
               await new Promise(r => setTimeout(r, wait));
