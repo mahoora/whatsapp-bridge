@@ -388,9 +388,26 @@ app.get('/test-groq', async (req, res) => {
     });
     clearTimeout(t);
     const j = await r.json();
-    res.json({ status: r.status, ok: r.ok, result: j.choices?.[0]?.message?.content });
+    res.json({ status: r.status, ok: r.ok, result: j.choices?.[0]?.message?.content, node: process.version });
   } catch(e) {
-    res.json({ error: e.message, name: e.name, code: e.cause?.code || null });
+    res.json({ error: e.message, name: e.name, code: e.cause?.code || null, node: process.version });
+  }
+});
+app.get('/test-ai', async (req, res) => {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 30000);
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: [{ role: 'system', content: 'أنت ماهر البدري، صاحب ورشة. رد بالعامية المصرية.' }, { role: 'user', content: 'السلام عليكم' }], max_tokens: 200 }),
+      signal: c.signal
+    });
+    clearTimeout(t);
+    const j = await r.json();
+    res.json({ status: r.status, ok: r.ok, result: j.choices?.[0]?.message?.content, node: process.version });
+  } catch(e) {
+    res.json({ error: e.message, name: e.name, code: e.cause?.code || null, node: process.version });
   }
 });
 app.get('/history', (req, res) => {
