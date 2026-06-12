@@ -358,8 +358,6 @@ async function startBridge() {
 
       const from = msg.key.remoteJid;
       let sendTo = from;
-      if (from.endsWith('@lid')) sendTo = ADMIN_JID;
-      else if (!from.endsWith('@g.us')) sendTo = from;
       let sender = msg.pushName || 'Unknown';
 
       const audioMsg = msg.message?.audioMessage;
