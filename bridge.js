@@ -26,6 +26,7 @@ const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
 const ADMIN_JID = process.env.ADMIN_JID || '966595510125@s.whatsapp.net';
 let latestQr = null;
 let lastAiCall = 0;
+let lastGroq429 = 0;
 
 function loadCreds() {
   const v = process.env.CREDS_JSON;
@@ -297,6 +298,7 @@ app.use(express.json());
 let currentSock = null;
 let wsConnected = false;
 let msgCount = 0;
+let lastGroq429 = 0;
 let lastError = '';
 let lastGroqError = '';
 let lastFrom = '';
@@ -712,48 +714,40 @@ async function startBridge() {
       lastError = '';
       lastGroqError = '';
       const h = history.slice(-10, -1);
-      // Cooldown: wait 3.5s between AI calls to avoid rate limits
+      // Cooldown: wait 2.5s between AI calls
       const since = Date.now() - lastAiCall;
-      if (since < 3500) await new Promise(r => setTimeout(r, 3500 - since));
-      // Try Groq first (more available quota), then Gemini as fallback
-      try {
+      if (since < 2500) await new Promise(r => setTimeout(r, 2500 - since));
+      // Skip Groq if rate limited in last 60s
+      if (Date.now() - lastGroq429 > 60000) {
+        try {
           const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
           for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
           msgs.push({ role: 'user', content: familyContext + '\n' + text });
-          for (let tries = 0; tries < 3; tries++) {
-            const c2 = new AbortController();
-            const t2 = setTimeout(() => c2.abort(), 25000);
-            const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-              method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
-              signal: c2.signal
-            });
-            clearTimeout(t2);
-            if (r2.status === 200) {
-              const j2 = await r2.json();
-              replyText = j2.choices?.[0]?.message?.content || '';
-              lastBranch = 'GROQ_OK';
-              break;
-            }
-            if (r2.status === 429 && tries < 2) {
-              const wait = tries === 0 ? 5000 : 10000;
-              console.error('Groq 429, retry ' + (tries+1) + ' in ' + wait + 'ms');
-              lastError = 'GROQ 429 RETRY ' + (tries+1);
-              lastGroqError = lastError;
-              await new Promise(r => setTimeout(r, wait));
-              continue;
-            }
+          const c2 = new AbortController();
+          const t2 = setTimeout(() => c2.abort(), 25000);
+          const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+            signal: c2.signal
+          });
+          clearTimeout(t2);
+          if (r2.status === 200) {
+            const j2 = await r2.json();
+            replyText = j2.choices?.[0]?.message?.content || '';
+            lastBranch = 'GROQ_OK';
+          } else {
             lastGroqError = 'GROQ HTTP ' + r2.status;
-            lastError = lastGroqError;
-            console.error('Groq error: ' + r2.status);
-            break;
+            if (r2.status === 429) lastGroq429 = Date.now();
           }
         } catch (err) {
           lastGroqError = err.message;
           if (!lastError) lastError = err.message;
           console.error('Groq error: ' + err.message);
         }
+      } else {
+        lastGroqError = 'SKIP (429 cooldown)';
+      }
       if (!replyText) replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
       if (replyText) lastBranch = 'GEMINI_OK';
 
