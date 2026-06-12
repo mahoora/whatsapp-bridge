@@ -191,6 +191,40 @@ async function callAI(systemPrompt, history, userMsg, retries = 2) {
   }
 }
 
+async function callAIGemini(systemPrompt, history, userMsg) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  const contents = [];
+  for (const msg of history) {
+    contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
+  }
+  contents.push({ role: 'user', parts: [{ text: userMsg }] });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (res.status !== 200) {
+      const errBody = await res.text().catch(() => '');
+      console.error('Gemini HTTP ' + res.status + ': ' + errBody.substring(0, 200));
+      lastError = 'GEMINI HTTP ' + res.status;
+      return null;
+    }
+    const j = await res.json();
+    return j.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  } catch (e) {
+    clearTimeout(timer);
+    console.error('Gemini error: ' + e.message);
+    if (!lastError) lastError = 'GEMINI_ERR: ' + e.message;
+    return null;
+  }
+}
+
 // Persistent conversation memory: saved to file, survives restarts
 const HISTORY_FILE = './conversation-history.json';
 const MAX_HISTORY = 30;
@@ -208,7 +242,7 @@ function transcribeAudio(audioBuffer) {
     const opts = {
       hostname: 'api.groq.com', path: '/openai/v1/audio/transcriptions',
       method: 'POST', timeout: 30000,
-      headers: form.getHeaders({ 'Authorization': 'Bearer ' + GROQ_API_KEY })
+        headers: form.getHeaders({ 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY })
     };
     const req = https.request(opts, res => {
       let b = '';
@@ -381,6 +415,23 @@ app.get('/test-groq', async (req, res) => {
     clearTimeout(t);
     const j = await r.json();
     res.json({ status: r.status, ok: r.ok, result: j.choices?.[0]?.message?.content, node: process.version });
+  } catch(e) {
+    res.json({ error: e.message, name: e.name, code: e.cause?.code || null, node: process.version });
+  }
+});
+app.get('/test-gemini', async (req, res) => {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 30000);
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + process.env.GEMINI_API_KEY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'السلام عليكم' }] }], systemInstruction: { parts: [{ text: 'أنت ماهر البدري، صاحب ورشة. رد بالعامية المصرية.' }] }, generationConfig: { maxOutputTokens: 200 } }),
+      signal: c.signal
+    });
+    clearTimeout(t);
+    const j = await r.json();
+    res.json({ status: r.status, ok: r.ok, result: j.candidates?.[0]?.content?.parts?.[0]?.text || '(empty)', node: process.version });
   } catch(e) {
     res.json({ error: e.message, name: e.name, code: e.cause?.code || null, node: process.version });
   }
@@ -606,40 +657,48 @@ async function startBridge() {
       pushNameVal = msg.pushName || '(none)';
       let replyText = '';
       lastError = '';
-      try {
-        const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
-        const h = history.slice(-10, -1);
-        for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
-        msgs.push({ role: 'user', content: familyContext + '\n' + text });
-        for (let tries = 0; tries < 3; tries++) {
-          const c2 = new AbortController();
-          const t2 = setTimeout(() => c2.abort(), 25000);
-          const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
-            signal: c2.signal
-          });
-          clearTimeout(t2);
-          if (r2.status === 200) {
-            const j2 = await r2.json();
-            replyText = j2.choices?.[0]?.message?.content || '';
+      const h = history.slice(-10, -1);
+      // Try Gemini first
+      replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
+      if (replyText) {
+        lastBranch = 'GEMINI_OK';
+      } else {
+        // Fall back to Groq with retries
+        try {
+          const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
+          for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
+          msgs.push({ role: 'user', content: familyContext + '\n' + text });
+          for (let tries = 0; tries < 3; tries++) {
+            const c2 = new AbortController();
+            const t2 = setTimeout(() => c2.abort(), 25000);
+            const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+              signal: c2.signal
+            });
+            clearTimeout(t2);
+            if (r2.status === 200) {
+              const j2 = await r2.json();
+              replyText = j2.choices?.[0]?.message?.content || '';
+              lastBranch = 'GROQ_OK';
+              break;
+            }
+            if (r2.status === 429 && tries < 2) {
+              const wait = tries === 0 ? 30000 : 60000;
+              console.error('Groq 429, retry ' + (tries+1) + ' in ' + wait + 'ms');
+              lastError = 'GROQ 429 RETRY ' + (tries+1);
+              await new Promise(r => setTimeout(r, wait));
+              continue;
+            }
+            lastError = 'GROQ HTTP ' + r2.status;
+            console.error('Groq error: ' + r2.status);
             break;
           }
-          if (r2.status === 429 && tries < 2) {
-            const wait = tries === 0 ? 30000 : 60000;
-            console.error('AI 429, retry ' + (tries+1) + ' in ' + wait + 'ms');
-            lastError = 'AI 429 RETRY ' + (tries+1);
-            await new Promise(r => setTimeout(r, wait));
-            continue;
-          }
-          lastError = 'AI HTTP ' + r2.status;
-          console.error('AI error: ' + r2.status);
-          break;
+        } catch (err) {
+          if (!lastError) lastError = err.message;
+          console.error('Groq error: ' + err.message);
         }
-      } catch (err) {
-        if (!lastError) lastError = err.message;
-        console.error('AI error: ' + err.message);
       }
 
       if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
