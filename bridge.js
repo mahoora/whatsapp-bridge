@@ -210,7 +210,10 @@ function callAI(systemPrompt, history, userMsg, retries = 2) {
     req.write(data);
     req.end();
   });
-  const p = aiQueue.then(() => doCall());
+  const p = aiQueue.then(() => Promise.race([
+    doCall(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('AI_HANG')), 35000))
+  ]));
   aiQueue = p.catch(() => {}).then(() => new Promise(r => setTimeout(r, 2000)));
   return p;
 }
