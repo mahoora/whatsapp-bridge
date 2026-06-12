@@ -708,13 +708,8 @@ async function startBridge() {
       let replyText = '';
       lastError = '';
       const h = history.slice(-10, -1);
-      // Try Gemini first
-      replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
-      if (replyText) {
-        lastBranch = 'GEMINI_OK';
-      } else {
-        // Fall back to Groq with retries
-        try {
+      // Try Groq first (more available quota), then Gemini as fallback
+      try {
           const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
           for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
           msgs.push({ role: 'user', content: familyContext + '\n' + text });
@@ -749,7 +744,8 @@ async function startBridge() {
           if (!lastError) lastError = err.message;
           console.error('Groq error: ' + err.message);
         }
-      }
+      if (!replyText) replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
+      if (replyText) lastBranch = 'GEMINI_OK';
 
       if (!replyText) { lastReply = '(no reply)'; continue; }
       lastReply = replyText.substring(0, 100);
