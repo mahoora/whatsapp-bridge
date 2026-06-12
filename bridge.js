@@ -298,7 +298,6 @@ app.use(express.json());
 let currentSock = null;
 let wsConnected = false;
 let msgCount = 0;
-let lastGroq429 = 0;
 let lastError = '';
 let lastGroqError = '';
 let lastFrom = '';
