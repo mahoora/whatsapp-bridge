@@ -473,7 +473,8 @@ app.get('/history', (req, res) => {
   res.json(obj);
 });
 app.get('/diag', (req, res) => {
-  res.json({ msgCount, lastError, lastFrom, lastReply, lastBranch, pushNameVal, wsConnected, aiMode, aiDisabledCount: aiDisabledPhones.length, user: currentSock?.user?.id, sockExists: !!currentSock, sendTestMsg: lastSendTestMsg });
+  const groqKeySet = !!process.env.GROQ_API_KEY;
+  res.json({ msgCount, lastError, lastFrom, lastReply, lastBranch, pushNameVal, wsConnected, aiMode, aiDisabledCount: aiDisabledPhones.length, user: currentSock?.user?.id, sockExists: !!currentSock, sendTestMsg: lastSendTestMsg, groqKeySet });
 });
 let lastSendTestMsg = '';
 app.get('/admin', (req, res) => {
