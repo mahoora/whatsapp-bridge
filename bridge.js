@@ -611,25 +611,31 @@ async function startBridge() {
         const h = history.slice(-10, -1);
         for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
         msgs.push({ role: 'user', content: familyContext + '\n' + text });
-        console.log('AI fetch starting, msgs=' + msgs.length);
-        const c2 = new AbortController();
-        const t2 = setTimeout(() => { lastError = 'AI_ABORT'; c2.abort(); }, 25000);
-        const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
-          signal: c2.signal
-        });
-        clearTimeout(t2);
-        console.log('AI fetch done, status=' + r2.status);
-        if (r2.status === 200) {
-          const j2 = await r2.json();
-          replyText = j2.choices?.[0]?.message?.content || '';
-          console.log('AI reply: ' + (replyText || '(empty)').substring(0, 50));
-        } else {
+        for (let tries = 0; tries < 3; tries++) {
+          const c2 = new AbortController();
+          const t2 = setTimeout(() => c2.abort(), 25000);
+          const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+            signal: c2.signal
+          });
+          clearTimeout(t2);
+          if (r2.status === 200) {
+            const j2 = await r2.json();
+            replyText = j2.choices?.[0]?.message?.content || '';
+            break;
+          }
+          if (r2.status === 429 && tries < 2) {
+            const wait = tries === 0 ? 30000 : 60000;
+            console.error('AI 429, retry ' + (tries+1) + ' in ' + wait + 'ms');
+            lastError = 'AI 429 RETRY ' + (tries+1);
+            await new Promise(r => setTimeout(r, wait));
+            continue;
+          }
           lastError = 'AI HTTP ' + r2.status;
-          const errText = await r2.text().catch(() => '');
-          console.error('AI error: ' + r2.status + ' ' + errText.substring(0, 100));
+          console.error('AI error: ' + r2.status);
+          break;
         }
       } catch (err) {
         if (!lastError) lastError = err.message;
