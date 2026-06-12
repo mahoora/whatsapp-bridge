@@ -367,6 +367,7 @@ app.delete('/ai-disabled/:phone', (req, res) => {
   res.json(aiDisabledPhones);
 });
 
+app.get('/node-version', (req, res) => res.send(process.version));
 app.get('/test-groq', async (req, res) => {
   try {
     const c = new AbortController();
@@ -604,13 +605,15 @@ async function startBridge() {
       lastBranch = 'AI_CALL';
       pushNameVal = msg.pushName || '(none)';
       let replyText = '';
+      lastError = '';
       try {
-        const c2 = new AbortController();
-        const t2 = setTimeout(() => c2.abort(), 30000);
         const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
         const h = history.slice(-10, -1);
         for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
         msgs.push({ role: 'user', content: familyContext + '\n' + text });
+        console.log('AI fetch starting, msgs=' + msgs.length);
+        const c2 = new AbortController();
+        const t2 = setTimeout(() => { lastError = 'AI_ABORT'; c2.abort(); }, 25000);
         const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
@@ -618,16 +621,19 @@ async function startBridge() {
           signal: c2.signal
         });
         clearTimeout(t2);
+        console.log('AI fetch done, status=' + r2.status);
         if (r2.status === 200) {
           const j2 = await r2.json();
           replyText = j2.choices?.[0]?.message?.content || '';
+          console.log('AI reply: ' + (replyText || '(empty)').substring(0, 50));
         } else {
           lastError = 'AI HTTP ' + r2.status;
-          console.error('AI error: ' + r2.status);
+          const errText = await r2.text().catch(() => '');
+          console.error('AI error: ' + r2.status + ' ' + errText.substring(0, 100));
         }
       } catch (err) {
-        lastError = err.message;
-        console.error('AI fetch error: ' + err.message);
+        if (!lastError) lastError = err.message;
+        console.error('AI error: ' + err.message);
       }
 
       if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
