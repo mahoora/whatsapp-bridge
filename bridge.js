@@ -170,6 +170,7 @@ const MAX_HISTORY = 30;
 let conversationHistory = loadHistory();
 let familyContacts = loadFamilyContacts();
 let aiDisabledPhones = loadAiDisabledPhones();
+let aiMode = 'ai';
 
 function transcribeAudio(audioBuffer) {
   return new Promise((resolve, reject) => {
@@ -422,7 +423,72 @@ async function startBridge() {
       if (history.length > MAX_HISTORY) history.shift();
       try { saveHistory(); } catch(e) {}
 
-      const family = familyContacts.find(f => f.phone && from.includes(f.phone));
+      const tlow = text.trim();
+      if (tlow === 'يدوي' || tlow === 'يدي') {
+        aiMode = 'manual';
+        await currentSock.sendMessage(sendTo, { text: '✅ تم التحويل إلى الرد اليدوي. أنت هترد بنفسك.' });
+        lastReply = 'MODE: manual';
+        continue;
+      }
+      if (tlow === 'تلقائي' || tlow === 'زكاء') {
+        aiMode = 'ai';
+        await currentSock.sendMessage(sendTo, { text: '✅ تم التشغيل. الزكاء هيرد على الرسايل.' });
+        lastReply = 'MODE: ai';
+        continue;
+      }
+      if (tlow === 'قائمة' || tlow === 'اعدادات' || tlow === 'menu') {
+        const st = aiMode === 'ai' ? 'تلقائي (الزكاء)' : 'يدوي';
+        try {
+          await currentSock.sendMessage(sendTo, {
+            text: 'الوضع الحالي: ' + st,
+            footer: 'ماهر البدري',
+            title: '⚙️ الإعدادات',
+            buttonText: 'اختر',
+            sections: [{
+              title: 'وضع الرد',
+              rows: [
+                { title: '🖐 رد يدوي', description: 'أنا أرد بنفسي', rowId: 'manual' },
+                { title: '🤖 رد الزكاء', description: 'الذكاء يرد تلقائي', rowId: 'ai' },
+                { title: '🚫 إلغاء شخص', description: 'أكتب الرقم اللي مايردش عليه', rowId: 'disable' }
+              ]
+            }]
+          });
+        } catch(e) {
+          await currentSock.sendMessage(sendTo, { text: 'الوضع: ' + st + '\nأرسل:\n"يدوي" → رد يدوي\n"تلقائي" → رد الزكاء' });
+        }
+        lastReply = 'MENU';
+        continue;
+      }
+      if (tlow.startsWith('الغاء ') || tlow.startsWith('إلغاء ') || tlow.startsWith('منع ')) {
+        const num = tlow.split(' ')[1];
+        if (num && num.length >= 9) {
+          if (!aiDisabledPhones.includes(num)) {
+            aiDisabledPhones.push(num);
+            saveAiDisabledPhones(aiDisabledPhones);
+          }
+          await currentSock.sendMessage(sendTo, { text: '✅ تم إيقاف الزكاء عن الرقم ' + num + '. أنت هترد عليه.' });
+        } else {
+          await currentSock.sendMessage(sendTo, { text: 'أكتب الرقم كامل، مثال:\nالغاء 201093122475' });
+        }
+        lastReply = 'DISABLE: ' + num;
+        continue;
+      }
+      if (tlow.startsWith('تفعيل ') || tlow.startsWith('تشغيل ')) {
+        const num = tlow.split(' ')[1];
+        if (num) {
+          aiDisabledPhones = aiDisabledPhones.filter(p => p !== num);
+          saveAiDisabledPhones(aiDisabledPhones);
+          await currentSock.sendMessage(sendTo, { text: '✅ تم تفعيل الزكاء للرقم ' + num + '. هيرد عليه تاني.' });
+        }
+        lastReply = 'ENABLE: ' + num;
+        continue;
+      }
+      if (aiMode === 'manual') {
+        console.log('Manual mode, skipping reply from: ' + sender);
+        continue;
+      }
+
+      const family = familyContacts.find(f => f.phone && (from.includes(f.phone) || senderPhone.includes(f.phone)));
       let familyContext = '';
       if (family) {
         familyContext = ' [هذا من العائلة: ' + family.relationship + ' (' + family.name + '). رد طبيعي بدون تعريف بنفسك، ' + family.style + ']';
