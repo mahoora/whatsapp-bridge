@@ -12,7 +12,7 @@ const FormData = require('form-data');
 const { exec } = require('child_process');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // Keep Render awake + save history every 5 minutes
 function startKeepAlive() {
@@ -21,7 +21,6 @@ function startKeepAlive() {
     saveHistory();
   }, 600000);
 }
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
 const ADMIN_JID = process.env.ADMIN_JID || '966595510125@s.whatsapp.net';
@@ -125,17 +124,31 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدا
 '2. إذا قال نعم أو أي تأكيد: أعطه رابط الجروب: https://chat.whatsapp.com/DL3qCnpSs6fHU5VYZgDgNL\n' +
 '3. وحذره: لا تنشر أي صور لمواد السباكة أو الحريق (حديد أو بلاستيك) لأن هذا جروب خاص بالمؤسسة فقط';
 
-let groqQueue = Promise.resolve();
-function callGroq(messages, retries = 2) {
+let aiQueue = Promise.resolve();
+function callAI(systemPrompt, history, userMsg, retries = 2) {
   const doCall = () => new Promise((resolve, reject) => {
     let done = false;
     const safeResolve = (v) => { if (!done) { done = true; resolve(v); } };
     const safeReject = (e) => { if (!done) { done = true; reject(e); } };
-    const data = JSON.stringify({ model: 'llama-3.1-8b-instant', messages });
+    const contents = [];
+    for (const msg of history) {
+      const role = msg.role === 'assistant' ? 'model' : 'user';
+      contents.push({ role, parts: [{ text: msg.content }] });
+    }
+    contents.push({ role: 'user', parts: [{ text: userMsg }] });
+    const body = {
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents,
+      generationConfig: { temperature: 0.7, maxOutputTokens: 1024 }
+    };
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) { safeReject(new Error('No GEMINI_API_KEY')); return; }
+    const data = JSON.stringify(body);
     const opts = {
-      hostname: 'api.groq.com', path: '/openai/v1/chat/completions',
+      hostname: 'generativelanguage.googleapis.com',
+      path: '/v1beta/models/gemini-1.5-flash:generateContent?key=' + apiKey,
       method: 'POST', timeout: 30000,
-      headers: { 'Authorization': 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
     };
     const req = https.request(opts, res => {
       let b = '';
@@ -145,26 +158,26 @@ function callGroq(messages, retries = 2) {
           const j = JSON.parse(b);
           if (res.statusCode === 429 && retries > 0) {
             const wait = (retries === 2 ? 30000 : 60000);
-            console.error('Groq 429, retrying in ' + wait + 'ms...');
-            setTimeout(() => { safeResolve(callGroq(messages, retries - 1)); }, wait);
+            console.error('AI 429, retrying in ' + wait + 'ms...');
+            setTimeout(() => { safeResolve(callAI(systemPrompt, history, userMsg, retries - 1)); }, wait);
             return;
           }
           if (res.statusCode !== 200) {
-            console.error('Groq HTTP ' + res.statusCode + ': ' + b.substring(0, 200));
-            safeReject(new Error('Groq ' + res.statusCode));
+            console.error('AI HTTP ' + res.statusCode + ': ' + b.substring(0, 200));
+            safeReject(new Error('AI ' + res.statusCode));
             return;
           }
-          safeResolve(j.choices?.[0]?.message?.content || '');
+          safeResolve(j.candidates?.[0]?.content?.parts?.[0]?.text || '');
         } catch(e) { safeReject(e); }
       });
     });
     req.on('error', (e) => safeReject(e));
-    req.on('timeout', () => { req.destroy(); safeReject(new Error('Groq timeout')); });
+    req.on('timeout', () => { req.destroy(); safeReject(new Error('AI timeout')); });
     req.write(data);
     req.end();
   });
-  const p = groqQueue.then(() => doCall());
-  groqQueue = p.catch(() => {}).then(() => new Promise(r => setTimeout(r, 3000)));
+  const p = aiQueue.then(() => doCall());
+  aiQueue = p.catch(() => {}).then(() => new Promise(r => setTimeout(r, 2000)));
   return p;
 }
 
@@ -506,13 +519,7 @@ async function startBridge() {
       }
 
       try {
-        const groqMessages = [
-          { role: 'system', content: SYSTEM_PROMPT },
-          ...history.slice(-10),
-          { role: 'user', content: text + familyContext }
-        ];
-
-        let replyText = await callGroq(groqMessages);
+        let replyText = await callAI(SYSTEM_PROMPT, history.slice(-10, -1), familyContext + '\n' + text);
 
         if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
         lastReply = replyText.substring(0, 100);
