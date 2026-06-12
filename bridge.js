@@ -416,7 +416,7 @@ async function startBridge() {
             if (resp.ok) {
               const buf = Buffer.from(await resp.arrayBuffer());
               if (buf.length > 500) {
-                await currentSock.sendMessage(sendTo, { audio: buf, mimetype: 'audio/mpeg', ptt: true });
+                await currentSock.sendMessage(sendTo, { audio: buf, mimetype: 'audio/mpeg' });
               }
             }
           } catch (e) { console.error('TTS error: ' + e.message); }
