@@ -740,7 +740,7 @@ async function startBridge() {
         }
       }
 
-      if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
+      if (!replyText) { lastReply = '(no reply)'; continue; }
       lastReply = replyText.substring(0, 100);
       await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
       await sock.sendMessage(ADMIN_JID, { text: replyText }).catch(() => {});
