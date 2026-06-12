@@ -27,6 +27,7 @@ const ADMIN_JID = process.env.ADMIN_JID || '966595510125@s.whatsapp.net';
 let latestQr = null;
 let lastAiCall = 0;
 let lastGroq429 = 0;
+let groqBackoff = 0;
 
 function loadCreds() {
   const v = process.env.CREDS_JSON;
@@ -716,9 +717,16 @@ async function startBridge() {
       // Cooldown: wait 4s between AI calls
       const since = Date.now() - lastAiCall;
       if (since < 4000) await new Promise(r => setTimeout(r, 4000 - since));
-      // إذا Groq مرجّع 429 خلال آخر 65 ثانية، نتخطاه
-      const groqCooldown = Date.now() - lastGroq429 < 65000;
-      if (!groqCooldown) {
+      // Groq backoff: 10s → 20s → 40s → 60s after consecutive 429s
+      const since429 = Date.now() - lastGroq429;
+      let backoff = 0;
+      if (lastGroq429 > 0 && since429 < 120000) {
+        groqBackoff = Math.min(60000, groqBackoff || 10000);
+        backoff = groqBackoff;
+      } else {
+        groqBackoff = 0;
+      }
+      if (backoff === 0 || since429 >= backoff) {
         try {
           const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
           for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
@@ -737,9 +745,10 @@ async function startBridge() {
             replyText = j2.choices?.[0]?.message?.content || '';
             lastBranch = 'GROQ_OK';
             lastGroq429 = 0;
+            groqBackoff = 0;
           } else {
             lastGroqError = 'GROQ HTTP ' + r2.status;
-            if (r2.status === 429) lastGroq429 = Date.now();
+            if (r2.status === 429) { lastGroq429 = Date.now(); groqBackoff = groqBackoff || 10000; }
           }
         } catch (err) {
           lastGroqError = err.message;
@@ -747,7 +756,7 @@ async function startBridge() {
           console.error('Groq error: ' + err.message);
         }
       } else {
-        lastGroqError = 'SKIP 429';
+        lastGroqError = 'BACKOFF ' + (backoff/1000) + 's';
       }
       if (!replyText) replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
       if (replyText) lastBranch = 'GEMINI_OK';
