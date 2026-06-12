@@ -191,7 +191,7 @@ async function callAI(systemPrompt, history, userMsg, retries = 2) {
   }
 }
 
-async function callAIGemini(systemPrompt, history, userMsg) {
+async function callAIGemini(systemPrompt, history, userMsg, retries = 2) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
   const contents = [];
@@ -209,6 +209,13 @@ async function callAIGemini(systemPrompt, history, userMsg) {
       signal: controller.signal
     });
     clearTimeout(timer);
+    if (res.status === 429 && retries > 0) {
+      const wait = retries === 2 ? 5000 : 15000;
+      console.error('Gemini 429, retry in ' + wait + 'ms');
+      lastError = 'GEMINI 429 RETRY';
+      await new Promise(r => setTimeout(r, wait));
+      return callAIGemini(systemPrompt, history, userMsg, retries - 1);
+    }
     if (res.status !== 200) {
       const errBody = await res.text().catch(() => '');
       console.error('Gemini HTTP ' + res.status + ': ' + errBody.substring(0, 200));
