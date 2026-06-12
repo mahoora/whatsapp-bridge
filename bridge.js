@@ -12,7 +12,7 @@ const FormData = require('form-data');
 const { exec } = require('child_process');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
 
 // Keep Render awake + save history every 5 minutes
 function startKeepAlive() {
@@ -130,25 +130,23 @@ function callAI(systemPrompt, history, userMsg, retries = 2) {
     let done = false;
     const safeResolve = (v) => { if (!done) { done = true; resolve(v); } };
     const safeReject = (e) => { if (!done) { done = true; reject(e); } };
-    const contents = [];
+    const messages = [{ role: 'system', content: systemPrompt }];
     for (const msg of history) {
-      const role = msg.role === 'assistant' ? 'model' : 'user';
-      contents.push({ role, parts: [{ text: msg.content }] });
+      messages.push({ role: msg.role, content: msg.content });
     }
-    contents.push({ role: 'user', parts: [{ text: userMsg }] });
-    const body = {
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents,
-      generationConfig: { temperature: 0.7, maxOutputTokens: 1024 }
-    };
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) { safeReject(new Error('No GEMINI_API_KEY')); return; }
+    messages.push({ role: 'user', content: userMsg });
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) { safeReject(new Error('No GROQ_API_KEY')); return; }
+    const body = { model: 'llama-3.3-70b-versatile', messages, temperature: 0.7, max_tokens: 1024 };
     const data = JSON.stringify(body);
     const opts = {
-      hostname: 'generativelanguage.googleapis.com',
-      path: '/v1beta/models/gemini-1.5-flash:generateContent?key=' + apiKey,
+      hostname: 'api.groq.com', path: '/openai/v1/chat/completions',
       method: 'POST', timeout: 30000,
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+      headers: {
+        'Authorization': 'Bearer ' + apiKey,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data)
+      }
     };
     const req = https.request(opts, res => {
       let b = '';
@@ -167,7 +165,7 @@ function callAI(systemPrompt, history, userMsg, retries = 2) {
             safeReject(new Error('AI ' + res.statusCode));
             return;
           }
-          safeResolve(j.candidates?.[0]?.content?.parts?.[0]?.text || '');
+          safeResolve(j.choices?.[0]?.message?.content || '');
         } catch(e) { safeReject(e); }
       });
     });
