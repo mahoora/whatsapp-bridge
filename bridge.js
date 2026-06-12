@@ -19,7 +19,7 @@ function startKeepAlive() {
   setInterval(() => {
     https.get(RENDER_URL + '/status', res => { res.resume(); }).on('error', () => {});
     saveHistory();
-  }, 600000);
+  }, 240000);
 }
 const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
