@@ -468,9 +468,14 @@ app.get('/admin', (req, res) => {
   const mode = aiMode === 'ai' ? '🤖' : '🖐';
   const modeText = aiMode === 'ai' ? 'رد الزكاء' : 'رد يدوي';
   const nextMode = aiMode === 'ai' ? 'manual' : 'ai';
-  const nextText = aiMode === 'ai' ? '🖐 ردي أنا' : '🤖 رد الزكاء';
-  const disabledList = aiDisabledPhones.map(p => `<li>${p} <a href="/enable/${p}" style="color:#4caf50;text-decoration:none">【تفعيل】</a></li>`).join('');
-  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#1a1a2e;color:#eee;padding:20px 20px 80px;max-width:500px;margin:auto}h2{color:#e94560;text-align:center}.card{background:#0f3460;padding:15px;border-radius:10px;margin:15px 0;text-align:center}.btn{display:inline-block;padding:12px 24px;margin:5px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;border:none;cursor:pointer}.btn-green{background:#4caf50;color:#fff}.btn-red{background:#e94560;color:#fff}input{padding:10px;border-radius:6px;border:none;width:70%;font-size:14px}.fab{position:fixed;bottom:20px;left:20px;z-index:999;display:flex;gap:8px}.fab-btn{display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:50%;color:#fff;font-size:24px;text-decoration:none;box-shadow:0 4px 12px rgba(0,0,0,0.4);transition:0.2s}.fab-btn:active{transform:scale(0.9)}.fab-ai{background:#4caf50}.fab-man{background:#e94560}</style></head><body><h2>🔧 تحكم البوت</h2><div class="card">${wsConnected ? '✅ متصل' : '❌ غير متصل'} | <b>${mode} ${modeText}</b></div><div class="card"><form action="/disable" method="get" style="display:flex;gap:8px"><input name="num" placeholder="رقم (مثال: 501234567)" required><button type="submit" class="btn btn-red" style="padding:10px 16px">🔇 إيقاف</button></form></div><h3 style="margin-top:25px">🔇 الأرقام الموقوفة</h3><ul style="list-style:none;padding:0">${disabledList || '<li style="color:#888">لا يوجد</li>'}</ul><div class="fab"><a href="/mode/${nextMode}" class="fab-btn ${aiMode === 'ai' ? 'fab-man' : 'fab-ai'}">${aiMode === 'ai' ? '🖐' : '🤖'}</a></div><p style="text-align:center;margin-top:30px"><a href="/admin" style="color:#888;font-size:13px">تحديث الصفحة</a></p></body></html>`);
+  const disabledList = aiDisabledPhones.map(p => `<li>${p} <a href="/enable/${encodeURIComponent(p)}" style="color:#4caf50;text-decoration:none">【تفعيل】</a></li>`).join('');
+  let convList = '';
+  for (const [jid] of conversationHistory) {
+    const phone = jid.split('@')[0].replace(/[^0-9]/g, '');
+    const isOff = aiDisabledPhones.some(p => phone.includes(p) || jid.includes(p));
+    convList += `<tr><td style="padding:6px 0">${phone}</td><td><a href="/disable/${encodeURIComponent(phone)}" class="btn btn-red" style="padding:4px 10px;font-size:12px">${isOff ? '🔇' : '🔊'}</a></td></tr>`;
+  }
+  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#1a1a2e;color:#eee;padding:20px 20px 80px;max-width:500px;margin:auto}h2{color:#e94560;text-align:center}.card{background:#0f3460;padding:15px;border-radius:10px;margin:15px 0;text-align:center}.btn{display:inline-block;padding:12px 24px;margin:5px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;border:none;cursor:pointer;text-align:center}.btn-green{background:#4caf50;color:#fff}.btn-red{background:#e94560;color:#fff}input{padding:10px;border-radius:6px;border:none;width:60%;font-size:14px}table{width:100%;font-size:14px}td{padding:4px}.fab{position:fixed;bottom:20px;left:20px;z-index:999;display:flex;gap:8px}.fab-btn{display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:50%;color:#fff;font-size:24px;text-decoration:none;box-shadow:0 4px 12px rgba(0,0,0,0.4);transition:0.2s}.fab-btn:active{transform:scale(0.9)}.fab-ai{background:#4caf50}.fab-man{background:#e94560}</style></head><body><h2>🔧 تحكم البوت</h2><div class="card">${wsConnected ? '✅ متصل' : '❌ غير متصل'} | <b>${mode} ${modeText}</b></div><div class="card"><form action="/disable" method="get" style="display:flex;gap:8px"><input name="num" placeholder="رقم (آخر 9 أرقام)" required><button type="submit" class="btn btn-red" style="padding:10px 16px">🔇 إيقاف</button></form></div><h3 style="margin-top:20px">💬 المحادثات</h3><table>${convList || '<tr><td style="color:#888">لا يوجد</td></tr>'}</table><div class="fab"><a href="/mode/${nextMode}" class="fab-btn ${aiMode === 'ai' ? 'fab-man' : 'fab-ai'}">${aiMode === 'ai' ? '🖐' : '🤖'}</a></div><p style="text-align:center;margin-top:30px"><a href="/admin" style="color:#888;font-size:13px">تحديث الصفحة</a></p></body></html>`);
 });
 app.get('/mode/:value', (req, res) => {
   const v = req.params.value;
@@ -479,14 +484,21 @@ app.get('/mode/:value', (req, res) => {
   else res.status(400).send('bad mode');
 });
 app.get('/disable', (req, res) => {
-  const num = req.query.num;
-  if (num && num.length >= 5) {
+  let num = (req.query.num || '').replace(/[^0-9]/g, '');
+  if (num.length >= 5) {
+    if (!aiDisabledPhones.includes(num)) { aiDisabledPhones.push(num); saveAiDisabledPhones(aiDisabledPhones); }
+  }
+  res.redirect('/admin');
+});
+app.get('/disable/:num', (req, res) => {
+  let num = (req.params.num || '').replace(/[^0-9]/g, '');
+  if (num.length >= 5) {
     if (!aiDisabledPhones.includes(num)) { aiDisabledPhones.push(num); saveAiDisabledPhones(aiDisabledPhones); }
   }
   res.redirect('/admin');
 });
 app.get('/enable/:num', (req, res) => {
-  const num = req.params.num;
+  const num = decodeURIComponent(req.params.num);
   aiDisabledPhones = aiDisabledPhones.filter(p => p !== num);
   saveAiDisabledPhones(aiDisabledPhones);
   res.redirect('/admin');
