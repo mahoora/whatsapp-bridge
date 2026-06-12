@@ -91,6 +91,7 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدا
 '- لو حد سلم عليك (السلام عليكم، هلا، مرحبا): رد التحية بأحسن منها وقل "وعليكم السلام ورحمة الله وبركاته" وبعدين رحب بالعميل وقلبه تحت أمرك.\n' +
 '- للعائلة: رد بنفس لهجة اللي كلمك\n' +
 '- العربية الفصحى ممنوع. رد بالعامية فقط\n' +
+'- **العملاء (غير العائلة): ناديهم باسمهم اللي جايزلك (مثلاً "مرحبا أحمد"). استخدم اسم العميل في أول رد.**\n' +
 '- **العملاء (غير العائلة): رد باللهجة المصرية فقط - استخدم الكلمات المصرية دي**\n' +
 'قاموس اللهجة المصرية (استخدمها بدل الفصحى):\n' +
 '- "إيه" بدل "ماذا"\n' +
@@ -547,10 +548,37 @@ async function startBridge() {
         continue;
       }
 
+      // New customer (no pushName) → send equipment list immediately
+      if (!msg.pushName || sender === 'Unknown' || sender.trim() === '') {
+        const eqList = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
+          '📍 شارع الحج، مكة المكرمة، الصنايعية الجديدة\n\n' +
+          'قائمة الإيجار (ريال/اليوم):\n' +
+          '1. ماكينة سن 2 بوصة ← 100 ريال\n' +
+          '2. ماكينة سن 3 بوصة ← 120 ريال\n' +
+          '3. مكنة جروف ← 80 ريال\n' +
+          '4. خواشة مواسير ← 50 ريال\n' +
+          '5. مكنة باركود HDP ← 200 ريال\n' +
+          '6. مكنة ضغط مياه (كهرباء) ← 50 ريال\n' +
+          '7. مكنة ضغط مياه (ديزل) ← 70 ريال\n' +
+          '8. مكنة HDP راس في راس ← 200 ريال\n' +
+          '9. مولد كهرباء 3 كيلو ← 100 ريال\n' +
+          '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال\n\n' +
+          'للطلب أو الاستفسار: كلم المهندس ماهر البدري';
+        lastReply = 'NEW CUSTOMER: sent equipment list';
+        await sock.sendMessage(sendTo, { text: eqList });
+        history.push({ role: 'assistant', content: eqList });
+        if (history.length > MAX_HISTORY) history.shift();
+        try { saveHistory(); } catch(e) {}
+        continue;
+      }
+
       const family = familyContacts.find(f => f.phone && (from.includes(f.phone) || senderPhone.includes(f.phone)));
       let familyContext = '';
       if (family) {
         familyContext = ' [هذا من العائلة: ' + family.relationship + ' (' + family.name + '). رد طبيعي بدون تعريف بنفسك، ' + family.style + ']';
+      } else {
+        // Pass customer name to AI so it addresses them by name
+        familyContext = ' [اسم العميل: ' + sender + '. ناديه باسمه في الرد وقل "مرحبا ' + sender + '"]';
       }
 
       try {
