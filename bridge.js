@@ -125,9 +125,10 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدا
 '2. إذا قال نعم أو أي تأكيد: أعطه رابط الجروب: https://chat.whatsapp.com/DL3qCnpSs6fHU5VYZgDgNL\n' +
 '3. وحذره: لا تنشر أي صور لمواد السباكة أو الحريق (حديد أو بلاستيك) لأن هذا جروب خاص بالمؤسسة فقط';
 
+let groqQueue = Promise.resolve();
 function callGroq(messages, retries = 2) {
-  let done = false;
-  return new Promise((resolve, reject) => {
+  const doCall = () => new Promise((resolve, reject) => {
+    let done = false;
     const safeResolve = (v) => { if (!done) { done = true; resolve(v); } };
     const safeReject = (e) => { if (!done) { done = true; reject(e); } };
     const data = JSON.stringify({ model: 'llama-3.3-70b-versatile', messages });
@@ -162,6 +163,9 @@ function callGroq(messages, retries = 2) {
     req.write(data);
     req.end();
   });
+  const p = groqQueue.then(() => doCall());
+  groqQueue = p.catch(() => {}).then(() => new Promise(r => setTimeout(r, 3000)));
+  return p;
 }
 
 // Persistent conversation memory: saved to file, survives restarts
@@ -338,6 +342,13 @@ app.delete('/ai-disabled/:phone', (req, res) => {
   res.json(aiDisabledPhones);
 });
 
+app.get('/history', (req, res) => {
+  const obj = {};
+  for (const [key, val] of conversationHistory) {
+    obj[key] = val.slice(-10);
+  }
+  res.json(obj);
+});
 app.get('/diag', (req, res) => {
   res.json({ msgCount, lastError, lastFrom, lastReply, wsConnected, user: currentSock?.user?.id });
 });
