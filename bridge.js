@@ -143,7 +143,7 @@ function callGroq(messages, retries = 2) {
         try {
           const j = JSON.parse(b);
           if (res.statusCode === 429 && retries > 0) {
-            const wait = (retries === 2 ? 3000 : 6000);
+            const wait = (retries === 2 ? 30000 : 60000);
             console.error('Groq 429, retrying in ' + wait + 'ms...');
             setTimeout(() => { safeResolve(callGroq(messages, retries - 1)); }, wait);
             return;
@@ -506,6 +506,7 @@ async function startBridge() {
         if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
         lastReply = replyText.substring(0, 100);
         await currentSock.sendMessage(sendTo, { text: replyText });
+        lastError = '';
         history.push({ role: 'assistant', content: replyText });
         if (history.length > MAX_HISTORY) history.shift();
         try { saveHistory(); } catch(e) {}
@@ -526,6 +527,9 @@ async function startBridge() {
       } catch (err) {
         lastError = err.message;
         console.error('Error: ' + err.message);
+        try {
+          await currentSock.sendMessage(sendTo, { text: 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.' });
+        } catch(e2) {}
       }
     } } catch(e) { lastError = 'FATAL: ' + e.message; console.error('FATAL: ' + e.message); }
   });
