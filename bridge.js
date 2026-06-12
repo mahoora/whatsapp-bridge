@@ -131,7 +131,7 @@ function callGroq(messages, retries = 2) {
     let done = false;
     const safeResolve = (v) => { if (!done) { done = true; resolve(v); } };
     const safeReject = (e) => { if (!done) { done = true; reject(e); } };
-    const data = JSON.stringify({ model: 'llama-3.3-70b-versatile', messages });
+    const data = JSON.stringify({ model: 'llama-3.1-8b-instant', messages });
     const opts = {
       hostname: 'api.groq.com', path: '/openai/v1/chat/completions',
       method: 'POST', timeout: 30000,
