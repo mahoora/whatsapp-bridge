@@ -361,8 +361,9 @@ app.get('/history', (req, res) => {
   res.json(obj);
 });
 app.get('/diag', (req, res) => {
-  res.json({ msgCount, lastError, lastFrom, lastReply, wsConnected, user: currentSock?.user?.id });
+  res.json({ msgCount, lastError, lastFrom, lastReply, wsConnected, user: currentSock?.user?.id, sockExists: !!currentSock, sendTestMsg: lastSendTestMsg });
 });
+let lastSendTestMsg = '';
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!wsConnected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
 });
@@ -399,16 +400,17 @@ async function startBridge() {
   });
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
-    try { for (const msg of messages) {
+        try { for (const msg of messages) {
       if (!msg.key || msg.key.fromMe) continue;
-      if (msg.key.remoteJid.endsWith('@g.us')) continue;
+      const jid = msg.key.remoteJid;
+      if (jid.endsWith('@g.us') || jid === 'status@broadcast' || jid.endsWith('@newsletter')) continue;
 
       let text = msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
         msg.message?.imageMessage?.caption ||
         '';
 
-      const from = msg.key.remoteJid;
+      const from = jid;
       let sendTo = from;
       let sender = msg.pushName || 'Unknown';
 
@@ -448,20 +450,20 @@ async function startBridge() {
       const tlow = text.trim();
       if (tlow === 'يدوي' || tlow === 'يدي') {
         aiMode = 'manual';
-        await currentSock.sendMessage(sendTo, { text: '✅ تم التحويل إلى الرد اليدوي. أنت هترد بنفسك.' });
+        await sock.sendMessage(sendTo, { text: '✅ تم التحويل إلى الرد اليدوي. أنت هترد بنفسك.' });
         lastReply = 'MODE: manual';
         continue;
       }
       if (tlow === 'تلقائي' || tlow === 'زكاء') {
         aiMode = 'ai';
-        await currentSock.sendMessage(sendTo, { text: '✅ تم التشغيل. الزكاء هيرد على الرسايل.' });
+        await sock.sendMessage(sendTo, { text: '✅ تم التشغيل. الزكاء هيرد على الرسايل.' });
         lastReply = 'MODE: ai';
         continue;
       }
       if (tlow === 'قائمة' || tlow === 'اعدادات' || tlow === 'menu') {
         const st = aiMode === 'ai' ? 'تلقائي (الزكاء)' : 'يدوي';
         try {
-          await currentSock.sendMessage(sendTo, {
+          await sock.sendMessage(sendTo, {
             text: 'الوضع الحالي: ' + st,
             footer: 'ماهر البدري',
             title: '⚙️ الإعدادات',
@@ -476,7 +478,7 @@ async function startBridge() {
             }]
           });
         } catch(e) {
-          await currentSock.sendMessage(sendTo, { text: 'الوضع: ' + st + '\nأرسل:\n"يدوي" → رد يدوي\n"تلقائي" → رد الزكاء' });
+          await sock.sendMessage(sendTo, { text: 'الوضع: ' + st + '\nأرسل:\n"يدوي" → رد يدوي\n"تلقائي" → رد الزكاء' });
         }
         lastReply = 'MENU';
         continue;
@@ -488,9 +490,9 @@ async function startBridge() {
             aiDisabledPhones.push(num);
             saveAiDisabledPhones(aiDisabledPhones);
           }
-          await currentSock.sendMessage(sendTo, { text: '✅ تم إيقاف الزكاء عن الرقم ' + num + '. أنت هترد عليه.' });
+          await sock.sendMessage(sendTo, { text: '✅ تم إيقاف الزكاء عن الرقم ' + num + '. أنت هترد عليه.' });
         } else {
-          await currentSock.sendMessage(sendTo, { text: 'أكتب الرقم كامل، مثال:\nالغاء 201093122475' });
+          await sock.sendMessage(sendTo, { text: 'أكتب الرقم كامل، مثال:\nالغاء 201093122475' });
         }
         lastReply = 'DISABLE: ' + num;
         continue;
@@ -500,7 +502,7 @@ async function startBridge() {
         if (num) {
           aiDisabledPhones = aiDisabledPhones.filter(p => p !== num);
           saveAiDisabledPhones(aiDisabledPhones);
-          await currentSock.sendMessage(sendTo, { text: '✅ تم تفعيل الزكاء للرقم ' + num + '. هيرد عليه تاني.' });
+          await sock.sendMessage(sendTo, { text: '✅ تم تفعيل الزكاء للرقم ' + num + '. هيرد عليه تاني.' });
         }
         lastReply = 'ENABLE: ' + num;
         continue;
@@ -521,7 +523,7 @@ async function startBridge() {
 
         if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
         lastReply = replyText.substring(0, 100);
-        await currentSock.sendMessage(sendTo, { text: replyText });
+        await sock.sendMessage(sendTo, { text: replyText });
         lastError = '';
         history.push({ role: 'assistant', content: replyText });
         if (history.length > MAX_HISTORY) history.shift();
@@ -534,7 +536,7 @@ async function startBridge() {
             if (resp.ok) {
               const buf = Buffer.from(await resp.arrayBuffer());
               if (buf.length > 500) {
-                await currentSock.sendMessage(sendTo, { audio: buf, mimetype: 'audio/mpeg' });
+                await sock.sendMessage(sendTo, { audio: buf, mimetype: 'audio/mpeg' });
               }
             }
           } catch (e) { console.error('TTS error: ' + e.message); }
@@ -544,7 +546,7 @@ async function startBridge() {
         lastError = err.message;
         console.error('Error: ' + err.message);
         try {
-          await currentSock.sendMessage(sendTo, { text: 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.' });
+          await sock.sendMessage(sendTo, { text: 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.' });
         } catch(e2) {}
       }
     } } catch(e) { lastError = 'FATAL: ' + e.message; console.error('FATAL: ' + e.message); }
