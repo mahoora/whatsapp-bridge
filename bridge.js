@@ -25,9 +25,6 @@ const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
 const ADMIN_JID = process.env.ADMIN_JID || '966595510125@s.whatsapp.net';
 let latestQr = null;
-let lastAiCall = 0;
-let lastGroq429 = 0;
-let groqBackoff = 0;
 
 function loadCreds() {
   const v = process.env.CREDS_JSON;
@@ -194,48 +191,38 @@ async function callAI(systemPrompt, history, userMsg, retries = 2) {
   }
 }
 
-const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').filter(Boolean);
-let keyIndex = 0;
-
-async function callAIGemini(systemPrompt, history, userMsg, keyStart = 0) {
-  if (GEMINI_KEYS.length === 0) return null;
-  for (let i = 0; i < GEMINI_KEYS.length; i++) {
-    const idx = (keyStart + i) % GEMINI_KEYS.length;
-    const apiKey = GEMINI_KEYS[idx];
-    const contents = [];
-    for (const msg of history) contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
-    contents.push({ role: 'user', parts: [{ text: userMsg }] });
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
-    try {
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } }),
-        signal: controller.signal
-      });
-      clearTimeout(timer);
-      if (res.status === 200) {
-        keyIndex = (idx + 1) % GEMINI_KEYS.length;
-        const j = await res.json();
-        return j.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      }
-      if (res.status === 429) {
-        console.error('Gemini 429 on key ' + (idx + 1) + '/' + GEMINI_KEYS.length);
-        lastError = 'GEMINI 429 key' + (idx + 1);
-        continue;
-      }
+async function callAIGemini(systemPrompt, history, userMsg) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  const contents = [];
+  for (const msg of history) {
+    contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
+  }
+  contents.push({ role: 'user', parts: [{ text: userMsg }] });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (res.status !== 200) {
       const errBody = await res.text().catch(() => '');
       console.error('Gemini HTTP ' + res.status + ': ' + errBody.substring(0, 200));
       lastError = 'GEMINI HTTP ' + res.status;
       return null;
-    } catch (e) {
-      clearTimeout(timer);
-      console.error('Gemini error: ' + e.message);
-      if (!lastError) lastError = 'GEMINI_ERR: ' + e.message;
-      return null;
     }
+    const j = await res.json();
+    return j.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  } catch (e) {
+    clearTimeout(timer);
+    console.error('Gemini error: ' + e.message);
+    if (!lastError) lastError = 'GEMINI_ERR: ' + e.message;
+    return null;
   }
-  return null;
 }
 
 // Persistent conversation memory: saved to file, survives restarts
@@ -300,7 +287,6 @@ let currentSock = null;
 let wsConnected = false;
 let msgCount = 0;
 let lastError = '';
-let lastGroqError = '';
 let lastFrom = '';
 let lastReply = '';
 let lastBranch = '';
@@ -437,8 +423,7 @@ app.get('/test-gemini', async (req, res) => {
   try {
     const c = new AbortController();
     const t = setTimeout(() => c.abort(), 30000);
-    const tk = GEMINI_KEYS[0] || '(empty)';
-    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + tk, {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + process.env.GEMINI_API_KEY, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'السلام عليكم' }] }], systemInstruction: { parts: [{ text: 'أنت ماهر البدري، صاحب ورشة. رد بالعامية المصرية.' }] }, generationConfig: { maxOutputTokens: 200 } }),
@@ -446,9 +431,9 @@ app.get('/test-gemini', async (req, res) => {
     });
     clearTimeout(t);
     const j = await r.json();
-    res.json({ status: r.status, ok: r.ok, result: j.candidates?.[0]?.content?.parts?.[0]?.text || '(empty)', keyPrefix: (GEMINI_KEYS[0] || '(empty)').substring(0,10), keysCount: GEMINI_KEYS.length, node: process.version });
+    res.json({ status: r.status, ok: r.ok, result: j.candidates?.[0]?.content?.parts?.[0]?.text || '(empty)', node: process.version });
   } catch(e) {
-    res.json({ error: e.message, name: e.name, code: e.cause?.code || null, keyPrefix: (GEMINI_KEYS[0] || '(empty)').substring(0,10), keysCount: GEMINI_KEYS.length, node: process.version });
+    res.json({ error: e.message, name: e.name, code: e.cause?.code || null, node: process.version });
   }
 });
 app.get('/test-ai', async (req, res) => {
@@ -476,8 +461,7 @@ app.get('/history', (req, res) => {
   res.json(obj);
 });
 app.get('/diag', (req, res) => {
-  const groqKeySet = !!process.env.GROQ_API_KEY;
-  res.json({ msgCount, lastError, lastGroqError, lastFrom, lastReply, lastBranch, pushNameVal, wsConnected, aiMode, aiDisabledCount: aiDisabledPhones.length, user: currentSock?.user?.id, sockExists: !!currentSock, sendTestMsg: lastSendTestMsg, groqKeySet });
+  res.json({ msgCount, lastError, lastFrom, lastReply, lastBranch, pushNameVal, wsConnected, aiMode, aiDisabledCount: aiDisabledPhones.length, user: currentSock?.user?.id, sockExists: !!currentSock, sendTestMsg: lastSendTestMsg });
 });
 let lastSendTestMsg = '';
 app.get('/admin', (req, res) => {
@@ -491,7 +475,7 @@ app.get('/admin', (req, res) => {
     const isOff = aiDisabledPhones.some(p => phone.includes(p) || jid.includes(p));
     convList += `<tr><td style="padding:6px 0">${phone}</td><td><a href="/disable/${encodeURIComponent(phone)}" class="btn btn-red" style="padding:4px 10px;font-size:12px">${isOff ? '🔇' : '🔊'}</a></td></tr>`;
   }
-  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#1a1a2e;color:#eee;padding:20px 20px 80px;max-width:500px;margin:auto}h2{color:#e94560;text-align:center}.card{background:#0f3460;padding:15px;border-radius:10px;margin:15px 0;text-align:center}.btn{display:inline-block;padding:12px 24px;margin:5px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;border:none;cursor:pointer;text-align:center}.btn-green{background:#4caf50;color:#fff}.btn-red{background:#e94560;color:#fff}.btn-gray{background:#555;color:#fff;opacity:0.6}input{padding:10px;border-radius:6px;border:none;width:60%;font-size:14px}table{width:100%;font-size:14px}td{padding:4px}.fab{position:fixed;bottom:20px;left:0;right:0;z-index:999;display:flex;justify-content:center;gap:0;padding:0 10px}.fab-btn{flex:1;max-width:200px;display:flex;align-items:center;justify-content:center;gap:6px;padding:14px 0;color:#fff;font-size:15px;font-weight:bold;text-decoration:none;transition:0.2s;box-shadow:0 -2px 10px rgba(0,0,0,0.3)}.fab-btn:active{opacity:0.8}.fab-left{border-radius:30px 0 0 30px}.fab-right{border-radius:0 30px 30px 0}.fab-on{background:#4caf50}.fab-off{background:#e94560}.fab-inactive{background:#555;opacity:0.5}</style></head><body><h2>🔧 تحكم البوت</h2><div class="card">${wsConnected ? '✅ متصل' : '❌ غير متصل'} | <b>${mode} ${modeText}</b><br><small>خطأ Groq: ${lastGroqError || '—'} | جيميني: ${lastError || '—'} | آخر رد: ${lastReply || '—'}</small></div><div class="card"><form action="/disable" method="get" style="display:flex;gap:8px"><input name="num" placeholder="رقم (آخر 9 أرقام)" required><button type="submit" class="btn btn-red" style="padding:10px 16px">🔇 إيقاف</button></form></div><h3 style="margin-top:20px">💬 المحادثات</h3><table>${convList || '<tr><td style="color:#888">لا يوجد</td></tr>'}</table><div class="fab"><a href="/mode/ai" class="fab-btn fab-left ${aiMode === 'ai' ? 'fab-off' : 'fab-inactive'}">🤖 تشغيل</a><a href="/mode/manual" class="fab-btn fab-right ${aiMode === 'manual' ? 'fab-on' : 'fab-inactive'}">🖐 إيقاف</a></div><p style="text-align:center;margin-top:30px"><a href="/admin" style="color:#888;font-size:13px">تحديث الصفحة</a></p></body></html>`);
+  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#1a1a2e;color:#eee;padding:20px 20px 80px;max-width:500px;margin:auto}h2{color:#e94560;text-align:center}.card{background:#0f3460;padding:15px;border-radius:10px;margin:15px 0;text-align:center}.btn{display:inline-block;padding:12px 24px;margin:5px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;border:none;cursor:pointer;text-align:center}.btn-green{background:#4caf50;color:#fff}.btn-red{background:#e94560;color:#fff}.btn-gray{background:#555;color:#fff;opacity:0.6}input{padding:10px;border-radius:6px;border:none;width:60%;font-size:14px}table{width:100%;font-size:14px}td{padding:4px}.fab{position:fixed;bottom:20px;left:0;right:0;z-index:999;display:flex;justify-content:center;gap:0;padding:0 10px}.fab-btn{flex:1;max-width:200px;display:flex;align-items:center;justify-content:center;gap:6px;padding:14px 0;color:#fff;font-size:15px;font-weight:bold;text-decoration:none;transition:0.2s;box-shadow:0 -2px 10px rgba(0,0,0,0.3)}.fab-btn:active{opacity:0.8}.fab-left{border-radius:30px 0 0 30px}.fab-right{border-radius:0 30px 30px 0}.fab-on{background:#4caf50}.fab-off{background:#e94560}.fab-inactive{background:#555;opacity:0.5}</style></head><body><h2>🔧 تحكم البوت</h2><div class="card">${wsConnected ? '✅ متصل' : '❌ غير متصل'} | <b>${mode} ${modeText}</b></div><div class="card"><form action="/disable" method="get" style="display:flex;gap:8px"><input name="num" placeholder="رقم (آخر 9 أرقام)" required><button type="submit" class="btn btn-red" style="padding:10px 16px">🔇 إيقاف</button></form></div><h3 style="margin-top:20px">💬 المحادثات</h3><table>${convList || '<tr><td style="color:#888">لا يوجد</td></tr>'}</table><div class="fab"><a href="/mode/ai" class="fab-btn fab-left ${aiMode === 'ai' ? 'fab-off' : 'fab-inactive'}">🤖 تشغيل</a><a href="/mode/manual" class="fab-btn fab-right ${aiMode === 'manual' ? 'fab-on' : 'fab-inactive'}">🖐 إيقاف</a></div><p style="text-align:center;margin-top:30px"><a href="/admin" style="color:#888;font-size:13px">تحديث الصفحة</a></p></body></html>`);
 });
 app.get('/mode/:value', (req, res) => {
   const v = req.params.value;
@@ -712,60 +696,54 @@ async function startBridge() {
       pushNameVal = msg.pushName || '(none)';
       let replyText = '';
       lastError = '';
-      lastGroqError = '';
       const h = history.slice(-10, -1);
-      // Cooldown: wait 4s between AI calls
-      const since = Date.now() - lastAiCall;
-      if (since < 4000) await new Promise(r => setTimeout(r, 4000 - since));
-      // Groq backoff: 10s → 20s → 40s → 60s after consecutive 429s
-      const since429 = Date.now() - lastGroq429;
-      let backoff = 0;
-      if (lastGroq429 > 0 && since429 < 120000) {
-        groqBackoff = Math.min(60000, groqBackoff || 10000);
-        backoff = groqBackoff;
+      // Try Gemini first
+      replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
+      if (replyText) {
+        lastBranch = 'GEMINI_OK';
       } else {
-        groqBackoff = 0;
-      }
-      if (backoff === 0 || since429 >= backoff) {
+        // Fall back to Groq with retries
         try {
           const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
           for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
           msgs.push({ role: 'user', content: familyContext + '\n' + text });
-          const c2 = new AbortController();
-          const t2 = setTimeout(() => c2.abort(), 30000);
-          const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
-            signal: c2.signal
-          });
-          clearTimeout(t2);
-          if (r2.status === 200) {
-            const j2 = await r2.json();
-            replyText = j2.choices?.[0]?.message?.content || '';
-            lastBranch = 'GROQ_OK';
-            lastGroq429 = 0;
-            groqBackoff = 0;
-          } else {
-            lastGroqError = 'GROQ HTTP ' + r2.status;
-            if (r2.status === 429) { lastGroq429 = Date.now(); groqBackoff = Math.min(60000, (groqBackoff || 15000) * 2); }
+          for (let tries = 0; tries < 3; tries++) {
+            const c2 = new AbortController();
+            const t2 = setTimeout(() => c2.abort(), 25000);
+            const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+              signal: c2.signal
+            });
+            clearTimeout(t2);
+            if (r2.status === 200) {
+              const j2 = await r2.json();
+              replyText = j2.choices?.[0]?.message?.content || '';
+              lastBranch = 'GROQ_OK';
+              break;
+            }
+            if (r2.status === 429 && tries < 2) {
+              const wait = tries === 0 ? 30000 : 60000;
+              console.error('Groq 429, retry ' + (tries+1) + ' in ' + wait + 'ms');
+              lastError = 'GROQ 429 RETRY ' + (tries+1);
+              await new Promise(r => setTimeout(r, wait));
+              continue;
+            }
+            lastError = 'GROQ HTTP ' + r2.status;
+            console.error('Groq error: ' + r2.status);
+            break;
           }
         } catch (err) {
-          lastGroqError = err.message;
           if (!lastError) lastError = err.message;
           console.error('Groq error: ' + err.message);
         }
-      } else {
-        lastGroqError = 'BACKOFF ' + (backoff/1000) + 's';
       }
-      if (!replyText) replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
-      if (replyText) lastBranch = 'GEMINI_OK';
 
-      if (!replyText) { lastReply = '(no reply)'; lastAiCall = Date.now(); continue; }
+      if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
       lastReply = replyText.substring(0, 100);
       await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
       await sock.sendMessage(ADMIN_JID, { text: replyText }).catch(() => {});
-      lastAiCall = Date.now();
       history.push({ role: 'assistant', content: replyText });
       if (history.length > MAX_HISTORY) history.shift();
       try { saveHistory(); } catch(e) {}
