@@ -194,46 +194,45 @@ async function callAI(systemPrompt, history, userMsg, retries = 2) {
 const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').filter(Boolean);
 let keyIndex = 0;
 
-async function callAIGemini(systemPrompt, history, userMsg, retries = 2) {
+async function callAIGemini(systemPrompt, history, userMsg, keyStart = 0) {
   if (GEMINI_KEYS.length === 0) return null;
-  const apiKey = GEMINI_KEYS[keyIndex % GEMINI_KEYS.length];
-  const contents = [];
-  for (const msg of history) {
-    contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
-  }
-  contents.push({ role: 'user', parts: [{ text: userMsg }] });
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30000);
-  try {
-    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } }),
-      signal: controller.signal
-    });
-    clearTimeout(timer);
-    if (res.status === 429 && retries > 0) {
-      keyIndex++;
-      const nextKey = GEMINI_KEYS[keyIndex % GEMINI_KEYS.length];
-      console.error('Gemini 429, switching to key ' + (keyIndex % GEMINI_KEYS.length + 1) + '/' + GEMINI_KEYS.length);
-      lastError = 'GEMINI 429 SWITCH';
-      await new Promise(r => setTimeout(r, 2000));
-      return callAIGemini(systemPrompt, history, userMsg, retries - 1);
-    }
-    if (res.status !== 200) {
+  for (let i = 0; i < GEMINI_KEYS.length; i++) {
+    const idx = (keyStart + i) % GEMINI_KEYS.length;
+    const apiKey = GEMINI_KEYS[idx];
+    const contents = [];
+    for (const msg of history) contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
+    contents.push({ role: 'user', parts: [{ text: userMsg }] });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } }),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (res.status === 200) {
+        keyIndex = (idx + 1) % GEMINI_KEYS.length;
+        const j = await res.json();
+        return j.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      }
+      if (res.status === 429) {
+        console.error('Gemini 429 on key ' + (idx + 1) + '/' + GEMINI_KEYS.length);
+        lastError = 'GEMINI 429 key' + (idx + 1);
+        continue;
+      }
       const errBody = await res.text().catch(() => '');
       console.error('Gemini HTTP ' + res.status + ': ' + errBody.substring(0, 200));
       lastError = 'GEMINI HTTP ' + res.status;
       return null;
+    } catch (e) {
+      clearTimeout(timer);
+      console.error('Gemini error: ' + e.message);
+      if (!lastError) lastError = 'GEMINI_ERR: ' + e.message;
+      return null;
     }
-    const j = await res.json();
-    return j.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  } catch (e) {
-    clearTimeout(timer);
-    console.error('Gemini error: ' + e.message);
-    if (!lastError) lastError = 'GEMINI_ERR: ' + e.message;
-    return null;
   }
+  return null;
 }
 
 // Persistent conversation memory: saved to file, survives restarts
