@@ -748,7 +748,7 @@ async function startBridge() {
             groqBackoff = 0;
           } else {
             lastGroqError = 'GROQ HTTP ' + r2.status;
-            if (r2.status === 429) { lastGroq429 = Date.now(); groqBackoff = groqBackoff || 10000; }
+            if (r2.status === 429) { lastGroq429 = Date.now(); groqBackoff = Math.min(60000, (groqBackoff || 5000) * 2); }
           }
         } catch (err) {
           lastGroqError = err.message;
