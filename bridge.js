@@ -279,6 +279,8 @@ let msgCount = 0;
 let lastError = '';
 let lastFrom = '';
 let lastReply = '';
+let lastBranch = '';
+let pushNameVal = '';
 let restartTimer = null;
 const lidToJid = new Map();
 
@@ -397,7 +399,7 @@ app.get('/history', (req, res) => {
   res.json(obj);
 });
 app.get('/diag', (req, res) => {
-  res.json({ msgCount, lastError, lastFrom, lastReply, wsConnected, aiMode, aiDisabledCount: aiDisabledPhones.length, user: currentSock?.user?.id, sockExists: !!currentSock, sendTestMsg: lastSendTestMsg });
+  res.json({ msgCount, lastError, lastFrom, lastReply, lastBranch, pushNameVal, wsConnected, aiMode, aiDisabledCount: aiDisabledPhones.length, user: currentSock?.user?.id, sockExists: !!currentSock, sendTestMsg: lastSendTestMsg });
 });
 let lastSendTestMsg = '';
 app.get('/', (req, res) => {
@@ -485,6 +487,7 @@ async function startBridge() {
 
       const tlow = text.trim();
       if (tlow === 'يدوي' || tlow === 'يدي') {
+        lastBranch = 'CMD_MANUAL';
         aiMode = 'manual';
         await sock.sendMessage(sendTo, { text: '✅ تم التحويل إلى الرد اليدوي. أنت هترد بنفسك.' });
         lastReply = 'MODE: manual';
@@ -548,8 +551,12 @@ async function startBridge() {
         continue;
       }
 
+      console.log('Processing from ' + sender + ' (' + from + '): "' + text.substring(0,50) + '"');
+
       // New customer (no pushName) → send equipment list immediately
-      if (!msg.pushName || sender === 'Unknown' || sender.trim() === '') {
+      const hasPushName = msg.pushName && sender !== 'Unknown' && sender.trim() !== '';
+      console.log('hasPushName=' + hasPushName + ' sender="' + sender + '" pushName="' + (msg.pushName||'') + '"');
+      if (!hasPushName) {
         const eqList = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
           '📍 شارع الحج، مكة المكرمة، الصنايعية الجديدة\n\n' +
           'قائمة الإيجار (ريال/اليوم):\n' +
@@ -564,6 +571,8 @@ async function startBridge() {
           '9. مولد كهرباء 3 كيلو ← 100 ريال\n' +
           '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال\n\n' +
           'للطلب أو الاستفسار: كلم المهندس ماهر البدري';
+        lastBranch = 'NEW_CUSTOMER';
+        pushNameVal = msg.pushName || '(none)';
         lastReply = 'NEW CUSTOMER: sent equipment list';
         await sock.sendMessage(sendTo, { text: eqList });
         history.push({ role: 'assistant', content: eqList });
@@ -581,6 +590,8 @@ async function startBridge() {
         familyContext = ' [اسم العميل: ' + sender + '. ناديه باسمه في الرد وقل "مرحبا ' + sender + '"]';
       }
 
+      lastBranch = 'AI_CALL';
+      pushNameVal = msg.pushName || '(none)';
       try {
         let replyText = await callAI(SYSTEM_PROMPT, history.slice(-10, -1), familyContext + '\n' + text);
 
@@ -606,6 +617,7 @@ async function startBridge() {
         }
         console.log('Replied: ' + replyText.substring(0, 50));
       } catch (err) {
+        lastBranch = 'AI_ERROR';
         lastError = err.message;
         console.error('Error: ' + err.message);
         try {
