@@ -160,44 +160,35 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدا
 '2. إذا قال نعم أو أي تأكيد: أعطه رابط الجروب: https://chat.whatsapp.com/DL3qCnpSs6fHU5VYZgDgNL\n' +
 '3. وحذره: لا تنشر أي صور لمواد السباكة أو الحريق (حديد أو بلاستيك) لأن هذا جروب خاص بالمؤسسة فقط';
 
-let aiQueue = Promise.resolve();
 async function callAI(systemPrompt, history, userMsg, retries = 2) {
-  const doCall = async () => {
-    const messages = [{ role: 'system', content: systemPrompt }];
-    for (const msg of history) messages.push({ role: msg.role, content: msg.content });
-    messages.push({ role: 'user', content: userMsg });
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error('No GROQ_API_KEY');
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30000);
-    try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages, temperature: 0.7, max_tokens: 1024 }),
-        signal: controller.signal
-      });
-      clearTimeout(timer);
-      if (res.status === 429 && retries > 0) {
-        const wait = retries === 2 ? 30000 : 60000;
-        console.error('AI 429, retrying in ' + wait + 'ms...');
-        await new Promise(r => setTimeout(r, wait));
-        return callAI(systemPrompt, history, userMsg, retries - 1);
-      }
-      if (res.status !== 200) throw new Error('AI HTTP ' + res.status);
-      const j = await res.json();
-      return j.choices?.[0]?.message?.content || '';
-    } catch (e) {
-      clearTimeout(timer);
-      throw e;
+  const messages = [{ role: 'system', content: systemPrompt }];
+  for (const msg of history) messages.push({ role: msg.role, content: msg.content });
+  messages.push({ role: 'user', content: userMsg });
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error('No GROQ_API_KEY');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages, temperature: 0.7, max_tokens: 1024 }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (res.status === 429 && retries > 0) {
+      const wait = retries === 2 ? 30000 : 60000;
+      console.error('AI 429, retrying in ' + wait + 'ms...');
+      await new Promise(r => setTimeout(r, wait));
+      return callAI(systemPrompt, history, userMsg, retries - 1);
     }
-  };
-  const p = aiQueue.then(() => Promise.race([
-    doCall(),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('AI_HANG')), 35000))
-  ]));
-  aiQueue = p.catch(() => {}).then(() => new Promise(r => setTimeout(r, 2000)));
-  return p;
+    if (res.status !== 200) throw new Error('AI HTTP ' + res.status);
+    const j = await res.json();
+    return j.choices?.[0]?.message?.content || '';
+  } catch (e) {
+    clearTimeout(timer);
+    throw e;
+  }
 }
 
 // Persistent conversation memory: saved to file, survives restarts
