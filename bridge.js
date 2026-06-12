@@ -516,20 +516,13 @@ async function startBridge() {
       }
 
       const family = familyContacts.find(f => f.phone && (from.includes(f.phone) || senderPhone.includes(f.phone)));
-      let replyText;
+      let familyContext = '';
+      if (family) {
+        familyContext = ' [هذا من العائلة: ' + family.relationship + ' (' + family.name + '). رد طبيعي بدون تعريف بنفسك، ' + family.style + ']';
+      }
 
       try {
-        if (family) {
-          const familyContext = ' [هذا من العائلة: ' + family.relationship + ' (' + family.name + '). رد طبيعي بدون تعريف بنفسك، ' + family.style + ']';
-          replyText = await callAI(SYSTEM_PROMPT, history.slice(-10, -1), familyContext + '\n' + text);
-        } else {
-          replyText = 'مرحبًا بكم في شركة ماهر البدري لمعدات السلامة من الحريق\n\n' +
-            '📍 العنوان: شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
-            '🔧 خدماتنا:\n' +
-            '• إيجار معدات حريق (ماكينات سن، مكن جروف، خواشة مواسير، مكن HDP، مكن ضغط مياه، موالد كهرباء، مقص مواسير)\n' +
-            '• صيانة وقطع غيار لجميع المعدات\n\n' +
-            '📞 للاستفسار: كلم المهندس ماهر البدري على الخاص أو زورنا في الورشة';
-        }
+        let replyText = await callAI(SYSTEM_PROMPT, history.slice(-10, -1), familyContext + '\n' + text);
 
         if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
         lastReply = replyText.substring(0, 100);
