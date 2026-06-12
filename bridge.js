@@ -714,9 +714,9 @@ async function startBridge() {
       lastError = '';
       lastGroqError = '';
       const h = history.slice(-10, -1);
-      // Cooldown: wait 2.5s between AI calls
+      // Cooldown: wait 4s between AI calls
       const since = Date.now() - lastAiCall;
-      if (since < 2500) await new Promise(r => setTimeout(r, 2500 - since));
+      if (since < 4000) await new Promise(r => setTimeout(r, 4000 - since));
       // Skip Groq if rate limited in last 60s
       if (Date.now() - lastGroq429 > 60000) {
         try {
@@ -751,7 +751,7 @@ async function startBridge() {
       if (!replyText) replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
       if (replyText) lastBranch = 'GEMINI_OK';
 
-      if (!replyText) { lastReply = '(no reply)'; continue; }
+      if (!replyText) { lastReply = '(no reply)'; lastAiCall = Date.now(); continue; }
       lastReply = replyText.substring(0, 100);
       await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
       await sock.sendMessage(ADMIN_JID, { text: replyText }).catch(() => {});
