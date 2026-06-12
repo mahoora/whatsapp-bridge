@@ -191,9 +191,12 @@ async function callAI(systemPrompt, history, userMsg, retries = 2) {
   }
 }
 
+const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').filter(Boolean);
+let keyIndex = 0;
+
 async function callAIGemini(systemPrompt, history, userMsg, retries = 2) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
+  if (GEMINI_KEYS.length === 0) return null;
+  const apiKey = GEMINI_KEYS[keyIndex % GEMINI_KEYS.length];
   const contents = [];
   for (const msg of history) {
     contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
@@ -210,10 +213,11 @@ async function callAIGemini(systemPrompt, history, userMsg, retries = 2) {
     });
     clearTimeout(timer);
     if (res.status === 429 && retries > 0) {
-      const wait = retries === 2 ? 5000 : 15000;
-      console.error('Gemini 429, retry in ' + wait + 'ms');
-      lastError = 'GEMINI 429 RETRY';
-      await new Promise(r => setTimeout(r, wait));
+      keyIndex++;
+      const nextKey = GEMINI_KEYS[keyIndex % GEMINI_KEYS.length];
+      console.error('Gemini 429, switching to key ' + (keyIndex % GEMINI_KEYS.length + 1) + '/' + GEMINI_KEYS.length);
+      lastError = 'GEMINI 429 SWITCH';
+      await new Promise(r => setTimeout(r, 2000));
       return callAIGemini(systemPrompt, history, userMsg, retries - 1);
     }
     if (res.status !== 200) {
@@ -430,7 +434,8 @@ app.get('/test-gemini', async (req, res) => {
   try {
     const c = new AbortController();
     const t = setTimeout(() => c.abort(), 30000);
-    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + process.env.GEMINI_API_KEY, {
+    const tk = GEMINI_KEYS[0] || '(empty)';
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + tk, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'السلام عليكم' }] }], systemInstruction: { parts: [{ text: 'أنت ماهر البدري، صاحب ورشة. رد بالعامية المصرية.' }] }, generationConfig: { maxOutputTokens: 200 } }),
@@ -438,9 +443,9 @@ app.get('/test-gemini', async (req, res) => {
     });
     clearTimeout(t);
     const j = await r.json();
-    res.json({ status: r.status, ok: r.ok, result: j.candidates?.[0]?.content?.parts?.[0]?.text || '(empty)', node: process.version });
+    res.json({ status: r.status, ok: r.ok, result: j.candidates?.[0]?.content?.parts?.[0]?.text || '(empty)', keyPrefix: (GEMINI_KEYS[0] || '(empty)').substring(0,10), keysCount: GEMINI_KEYS.length, node: process.version });
   } catch(e) {
-    res.json({ error: e.message, name: e.name, code: e.cause?.code || null, node: process.version });
+    res.json({ error: e.message, name: e.name, code: e.cause?.code || null, keyPrefix: (GEMINI_KEYS[0] || '(empty)').substring(0,10), keysCount: GEMINI_KEYS.length, node: process.version });
   }
 });
 app.get('/test-ai', async (req, res) => {
