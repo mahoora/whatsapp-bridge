@@ -376,6 +376,23 @@ app.delete('/ai-disabled/:phone', (req, res) => {
   res.json(aiDisabledPhones);
 });
 
+app.get('/test-groq', async (req, res) => {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 10000);
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: 'say hi' }], max_tokens: 10 }),
+      signal: c.signal
+    });
+    clearTimeout(t);
+    const j = await r.json();
+    res.json({ status: r.status, ok: r.ok, result: j.choices?.[0]?.message?.content });
+  } catch(e) {
+    res.json({ error: e.message, name: e.name, code: e.cause?.code || null });
+  }
+});
 app.get('/history', (req, res) => {
   const obj = {};
   for (const [key, val] of conversationHistory) {
