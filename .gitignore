@@ -5,3 +5,5 @@ orders.db-shm
 orders.db-wal
 *.log
 .env
+conversation-history.json
+ai-disabled.json

@@ -65,6 +65,13 @@ function loadFamilyContacts() {
 function saveFamilyContacts(data) {
   fs.writeFileSync('./family-contacts.json', JSON.stringify(data, null, 2));
 }
+function loadAiDisabledPhones() {
+  try { return JSON.parse(fs.readFileSync('./ai-disabled.json')); }
+  catch(e) { return []; }
+}
+function saveAiDisabledPhones(data) {
+  fs.writeFileSync('./ai-disabled.json', JSON.stringify(data, null, 2));
+}
 
 const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب شركة معدات حريق.\n\n' +
 'العنوان: شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
@@ -162,6 +169,7 @@ const HISTORY_FILE = './conversation-history.json';
 const MAX_HISTORY = 30;
 let conversationHistory = loadHistory();
 let familyContacts = loadFamilyContacts();
+let aiDisabledPhones = loadAiDisabledPhones();
 
 function transcribeAudio(audioBuffer) {
   return new Promise((resolve, reject) => {
@@ -308,6 +316,27 @@ app.delete('/family/:phone', (req, res) => {
   res.json({ success: true });
 });
 
+app.get('/ai-disabled', (req, res) => {
+  res.json(aiDisabledPhones);
+});
+
+app.post('/ai-disabled', (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ error: 'Missing phone' });
+  if (!aiDisabledPhones.includes(phone)) {
+    aiDisabledPhones.push(phone);
+    saveAiDisabledPhones(aiDisabledPhones);
+  }
+  res.json(aiDisabledPhones);
+});
+
+app.delete('/ai-disabled/:phone', (req, res) => {
+  const phone = req.params.phone;
+  aiDisabledPhones = aiDisabledPhones.filter(p => p !== phone);
+  saveAiDisabledPhones(aiDisabledPhones);
+  res.json(aiDisabledPhones);
+});
+
 app.get('/diag', (req, res) => {
   res.json({ msgCount, lastError, lastFrom, lastReply, wsConnected, user: currentSock?.user?.id });
 });
@@ -359,6 +388,12 @@ async function startBridge() {
       const from = msg.key.remoteJid;
       let sendTo = from;
       let sender = msg.pushName || 'Unknown';
+
+      const senderPhone = from.split('@')[0].replace(/[^0-9]/g, '');
+      if (aiDisabledPhones.some(p => senderPhone.includes(p) || from.includes(p))) {
+        console.log('Skipping disabled phone: ' + senderPhone);
+        continue;
+      }
 
       const audioMsg = msg.message?.audioMessage;
       let isVoice = false;
