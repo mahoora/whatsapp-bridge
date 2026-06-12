@@ -25,6 +25,7 @@ const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
 const ADMIN_JID = process.env.ADMIN_JID || '966595510125@s.whatsapp.net';
 let latestQr = null;
+let lastAiCall = 0;
 
 function loadCreds() {
   const v = process.env.CREDS_JSON;
@@ -708,6 +709,9 @@ async function startBridge() {
       let replyText = '';
       lastError = '';
       const h = history.slice(-10, -1);
+      // Cooldown: wait 3.5s between AI calls to avoid rate limits
+      const since = Date.now() - lastAiCall;
+      if (since < 3500) await new Promise(r => setTimeout(r, 3500 - since));
       // Try Groq first (more available quota), then Gemini as fallback
       try {
           const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
@@ -751,6 +755,7 @@ async function startBridge() {
       lastReply = replyText.substring(0, 100);
       await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
       await sock.sendMessage(ADMIN_JID, { text: replyText }).catch(() => {});
+      lastAiCall = Date.now();
       history.push({ role: 'assistant', content: replyText });
       if (history.length > MAX_HISTORY) history.shift();
       try { saveHistory(); } catch(e) {}
