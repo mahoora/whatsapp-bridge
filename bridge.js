@@ -576,7 +576,8 @@ async function startBridge() {
         lastBranch = 'NEW_CUSTOMER';
         pushNameVal = msg.pushName || '(none)';
         lastReply = 'NEW CUSTOMER: sent equipment list';
-        await sock.sendMessage(sendTo, { text: eqList });
+        await sock.sendMessage(sendTo, { text: eqList }).catch(() => {});
+        try { await sock.sendMessage(ADMIN_JID, { text: eqList }); } catch(e) {}
         history.push({ role: 'assistant', content: eqList });
         if (history.length > MAX_HISTORY) history.shift();
         try { saveHistory(); } catch(e) {}
@@ -599,7 +600,8 @@ async function startBridge() {
 
         if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
         lastReply = replyText.substring(0, 100);
-        await sock.sendMessage(sendTo, { text: replyText });
+        await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
+        await sock.sendMessage(ADMIN_JID, { text: replyText }).catch(() => {});
         lastError = '';
         history.push({ role: 'assistant', content: replyText });
         if (history.length > MAX_HISTORY) history.shift();
