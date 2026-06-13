@@ -194,6 +194,43 @@ async function callAI(systemPrompt, history, userMsg, retries = 2) {
 const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 let keyIndex = 0;
 
+const MISTRAL_KEYS = (process.env.MISTRAL_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
+let mistralKeyIndex = 0;
+
+async function callMistral(systemPrompt, history, userMsg) {
+  if (MISTRAL_KEYS.length === 0) return null;
+  for (let i = 0; i < MISTRAL_KEYS.length; i++) {
+    const idx = (mistralKeyIndex + i) % MISTRAL_KEYS.length;
+    const apiKey = MISTRAL_KEYS[idx];
+    const msgs = [{ role: 'system', content: systemPrompt }];
+    for (const m of history) msgs.push({ role: m.role, content: m.content || '' });
+    msgs.push({ role: 'user', content: userMsg });
+    try {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 25000);
+      const r = await fetch('https://api.mistral.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'open-mistral-nemo', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+        signal: c.signal
+      });
+      clearTimeout(t);
+      if (r.status === 200) {
+        mistralKeyIndex = (idx + 1) % MISTRAL_KEYS.length;
+        const j = await r.json();
+        return j.choices?.[0]?.message?.content || '';
+      }
+      if (r.status === 429) { lastError = 'MISTRAL 429 key' + (idx + 1); continue; }
+      lastError = 'MISTRAL HTTP ' + r.status;
+      return null;
+    } catch (e) {
+      if (!lastError) lastError = 'MISTRAL_ERR: ' + e.message;
+      return null;
+    }
+  }
+  return null;
+}
+
 async function callAIGemini(systemPrompt, history, userMsg) {
   if (GEMINI_KEYS.length === 0) return null;
   for (let i = 0; i < GEMINI_KEYS.length; i++) {
@@ -707,35 +744,41 @@ async function startBridge() {
       let replyText = '';
       lastError = '';
       const h = history.slice(-10, -1);
-      // Try Gemini first
-      replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
+      // Try Mistral first (generous free tier)
+      replyText = await callMistral(SYSTEM_PROMPT, h, familyContext + '\n' + text);
       if (replyText) {
-        lastBranch = 'GEMINI_OK';
+        lastBranch = 'MISTRAL_OK';
       } else {
-        // Fall back to Groq with retries
-        try {
-          const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
-          for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
-          msgs.push({ role: 'user', content: familyContext + '\n' + text });
-          const c2 = new AbortController();
-          const t2 = setTimeout(() => c2.abort(), 30000);
-          const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
-            signal: c2.signal
-          });
-          clearTimeout(t2);
-          if (r2.status === 200) {
-            const j2 = await r2.json();
-            replyText = j2.choices?.[0]?.message?.content || '';
-            lastBranch = 'GROQ_OK';
-          } else {
-            lastError = 'GROQ HTTP ' + r2.status;
+        // Fall back to Gemini (5 key rotation)
+        replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
+        if (replyText) {
+          lastBranch = 'GEMINI_OK';
+        } else {
+          // Fall back to Groq once
+          try {
+            const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
+            for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
+            msgs.push({ role: 'user', content: familyContext + '\n' + text });
+            const c2 = new AbortController();
+            const t2 = setTimeout(() => c2.abort(), 30000);
+            const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+              signal: c2.signal
+            });
+            clearTimeout(t2);
+            if (r2.status === 200) {
+              const j2 = await r2.json();
+              replyText = j2.choices?.[0]?.message?.content || '';
+              lastBranch = 'GROQ_OK';
+            } else {
+              lastError = 'GROQ HTTP ' + r2.status;
+            }
+          } catch (err) {
+            if (!lastError) lastError = err.message;
+            console.error('Groq error: ' + err.message);
           }
-        } catch (err) {
-          if (!lastError) lastError = err.message;
-          console.error('Groq error: ' + err.message);
         }
       }
 
