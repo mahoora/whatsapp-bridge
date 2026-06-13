@@ -744,17 +744,17 @@ async function startBridge() {
       let replyText = '';
       lastError = '';
       const h = history.slice(-10, -1);
-      // Try Mistral first (generous free tier)
-      replyText = await callMistral(SYSTEM_PROMPT, h, familyContext + '\n' + text);
+      // Gemini first (5 key rotation)
+      replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
       if (replyText) {
-        lastBranch = 'MISTRAL_OK';
+        lastBranch = 'GEMINI_OK';
       } else {
-        // Fall back to Gemini (5 key rotation)
-        replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
+        // Try Mistral as backup
+        replyText = await callMistral(SYSTEM_PROMPT, h, familyContext + '\n' + text);
         if (replyText) {
-          lastBranch = 'GEMINI_OK';
+          lastBranch = 'MISTRAL_OK';
         } else {
-          // Fall back to Groq once
+          // Try Groq once
           try {
             const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
             for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
