@@ -191,38 +191,48 @@ async function callAI(systemPrompt, history, userMsg, retries = 2) {
   }
 }
 
+const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
+let keyIndex = 0;
+
 async function callAIGemini(systemPrompt, history, userMsg) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  const contents = [];
-  for (const msg of history) {
-    contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
-  }
-  contents.push({ role: 'user', parts: [{ text: userMsg }] });
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30000);
-  try {
-    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } }),
-      signal: controller.signal
-    });
-    clearTimeout(timer);
-    if (res.status !== 200) {
+  if (GEMINI_KEYS.length === 0) return null;
+  for (let i = 0; i < GEMINI_KEYS.length; i++) {
+    const idx = (keyIndex + i) % GEMINI_KEYS.length;
+    const apiKey = GEMINI_KEYS[idx];
+    const contents = [];
+    for (const msg of history) contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
+    contents.push({ role: 'user', parts: [{ text: userMsg }] });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } }),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (res.status === 200) {
+        keyIndex = (idx + 1) % GEMINI_KEYS.length;
+        const j = await res.json();
+        return j.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      }
+      if (res.status === 429) {
+        console.error('Gemini 429 on key ' + (idx + 1) + '/' + GEMINI_KEYS.length);
+        lastError = 'GEMINI 429 key' + (idx + 1);
+        continue;
+      }
       const errBody = await res.text().catch(() => '');
       console.error('Gemini HTTP ' + res.status + ': ' + errBody.substring(0, 200));
       lastError = 'GEMINI HTTP ' + res.status;
       return null;
+    } catch (e) {
+      clearTimeout(timer);
+      console.error('Gemini error: ' + e.message);
+      if (!lastError) lastError = 'GEMINI_ERR: ' + e.message;
+      return null;
     }
-    const j = await res.json();
-    return j.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  } catch (e) {
-    clearTimeout(timer);
-    console.error('Gemini error: ' + e.message);
-    if (!lastError) lastError = 'GEMINI_ERR: ' + e.message;
-    return null;
   }
+  return null;
 }
 
 // Persistent conversation memory: saved to file, survives restarts
@@ -707,32 +717,21 @@ async function startBridge() {
           const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
           for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
           msgs.push({ role: 'user', content: familyContext + '\n' + text });
-          for (let tries = 0; tries < 3; tries++) {
-            const c2 = new AbortController();
-            const t2 = setTimeout(() => c2.abort(), 25000);
-            const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-              method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
-              signal: c2.signal
-            });
-            clearTimeout(t2);
-            if (r2.status === 200) {
-              const j2 = await r2.json();
-              replyText = j2.choices?.[0]?.message?.content || '';
-              lastBranch = 'GROQ_OK';
-              break;
-            }
-            if (r2.status === 429 && tries < 2) {
-              const wait = tries === 0 ? 30000 : 60000;
-              console.error('Groq 429, retry ' + (tries+1) + ' in ' + wait + 'ms');
-              lastError = 'GROQ 429 RETRY ' + (tries+1);
-              await new Promise(r => setTimeout(r, wait));
-              continue;
-            }
+          const c2 = new AbortController();
+          const t2 = setTimeout(() => c2.abort(), 30000);
+          const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+            signal: c2.signal
+          });
+          clearTimeout(t2);
+          if (r2.status === 200) {
+            const j2 = await r2.json();
+            replyText = j2.choices?.[0]?.message?.content || '';
+            lastBranch = 'GROQ_OK';
+          } else {
             lastError = 'GROQ HTTP ' + r2.status;
-            console.error('Groq error: ' + r2.status);
-            break;
           }
         } catch (err) {
           if (!lastError) lastError = err.message;
