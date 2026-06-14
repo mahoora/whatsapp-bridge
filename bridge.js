@@ -203,6 +203,37 @@ let keyIndex = 0;
 const MISTRAL_KEYS = (process.env.MISTRAL_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 let mistralKeyIndex = 0;
 
+const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || '';
+const CF_API_TOKEN = process.env.CF_API_TOKEN || '';
+
+async function callCloudflare(systemPrompt, history, userMsg) {
+  if (!CF_ACCOUNT_ID || !CF_API_TOKEN) return null;
+  const msgs = [{ role: 'system', content: systemPrompt }];
+  for (const m of history) msgs.push({ role: m.role, content: m.content || '' });
+  msgs.push({ role: 'user', content: userMsg });
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 30000);
+    const r = await fetch('https://api.cloudflare.com/client/v4/accounts/' + CF_ACCOUNT_ID + '/ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + CF_API_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+      signal: c.signal
+    });
+    clearTimeout(t);
+    if (r.status === 200) {
+      const j = await r.json();
+      return j.choices?.[0]?.message?.content || '';
+    }
+    if (r.status === 429) { lastError = 'CF 429'; return null; }
+    lastError = 'CF HTTP ' + r.status;
+    return null;
+  } catch (e) {
+    if (!lastError) lastError = 'CF_ERR: ' + e.message;
+    return null;
+  }
+}
+
 async function callMistral(systemPrompt, history, userMsg) {
   if (MISTRAL_KEYS.length === 0) return null;
   for (let i = 0; i < MISTRAL_KEYS.length; i++) {
@@ -755,6 +786,11 @@ async function startBridge() {
       if (replyText) {
         lastBranch = 'GEMINI_OK';
       } else {
+        // Try Cloudflare Workers AI
+        replyText = await callCloudflare(SYSTEM_PROMPT, h, familyContext + '\n' + text);
+        if (replyText) {
+          lastBranch = 'CLOUDFLARE_OK';
+        } else {
         // Try Groq once
         try {
           const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
@@ -780,6 +816,7 @@ async function startBridge() {
           if (!lastError) lastError = err.message;
           console.error('Groq error: ' + err.message);
         }
+      }
       }
 
       if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
