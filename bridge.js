@@ -157,7 +157,7 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدا
 '** قسم طقم الأسنان **\n' +
 'إذا احتوت الرسالة على (أسنان، أسنان ماكينة، طقم أسنان): رد فوراً بدون مقدمات: "طقم الأسنان موجود ومتوفر للبيع ومتاح في الورشة علطول يا فندم، تنورنا في أي وقت!"\n\n' +
 '** قسم الصيانة والقطع الكبيرة **\n' +
-'إذا احتوت الرسالة على (موتور، طرمبة، طرمبة زيت، لقمة، لوقم، تصليح، اصلاح، اصلح، اصلحها، عطلانة، عطلان، عطل، صيانة، طريقة تصليح sabotage، مكنه، ماكنة، عندي مكنه): رد فوراً: "أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه."\n\n' +
+'إذا احتوت الرسالة على (موتور، طرمبة، طرمبة زيت، لقمة، لوقم، تصليح، اصلاح، اصلح، اصلحها، عطلانة، عطلان، عطل، صيانة، طريقة تصليح، مكنه، ماكنة، عندي مكنه): رد فوراً: "أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه."\n\n' +
 '** قسم تكلفة الصيانة **\n' +
 'إذا سأل عن (التكلفة كام، تكلف صيانة كام، حسابها كام): رد فوراً: "يا فندم التكلفة دي بتكون حسب ما المهندس ماهر يشوف المكنة ويعاين العطل بنفسه، أو أنا بجيب لك الأسعار من المهندس علطول. تشرفنا في الورشة!"\n\n' +
 '** انضمام الجروب **\n' +
@@ -600,22 +600,6 @@ async function startBridge() {
     logger: pino({ level: 'silent' }),
     browser: ['Chrome', 'Chrome', '120.0'],
   });
-
-  // 👇 تعديل احترافي: حقن ميزة جاري الكتابة + الانتظار مباشرة جوه دالة الإرسال الأصلية للبوت
-  const originalSendMessage = sock.sendMessage.bind(sock);
-  sock.sendMessage = async (jid, content, options) => {
-    try {
-      if (jid && !jid.endsWith('@g.us') && content && content.text) {
-        await sock.sendPresenceUpdate('composing', jid).catch(() => {});
-        await new Promise(r => setTimeout(r, 3000));
-        await sock.sendPresenceUpdate('paused', jid).catch(() => {});
-      }
-    } catch (e) {
-      console.error('Presence error:', e.message);
-    }
-    return originalSendMessage(jid, content, options);
-  };
-
   currentSock = sock;
 
   sock.ev.on('creds.update', () => { saveCreds(); saveCredsToEnv(); });
@@ -724,81 +708,144 @@ async function startBridge() {
         continue;
       }
       if (tlow.startsWith('الغاء ') || tlow.startsWith('إلغاء ') || tlow.startsWith('منع ')) {
-        const num = tlow.split(' ')[1]?.replace(/[^0-9]/g, '');
-        if (num && num.length >= 5) {
-          if (!aiDisabledPhones.includes(num)) { aiDisabledPhones.push(num); saveAiDisabledPhones(aiDisabledPhones); }
-          await sock.sendMessage(sendTo, { text: `🚫 تم إلغاء تفعيل الذكاء الاصطناعي للرقم: ${num}` });
+        const num = tlow.split(' ')[1];
+        if (num && num.length >= 9) {
+          if (!aiDisabledPhones.includes(num)) {
+            aiDisabledPhones.push(num);
+            saveAiDisabledPhones(aiDisabledPhones);
+          }
+          await sock.sendMessage(sendTo, { text: '✅ تم إيقاف الزكاء عن الرقم ' + num + '. أنت هترد عليه.' });
         } else {
-          await sock.sendMessage(sendTo, { text: '❌ الرقم غير صحيح. اكتب مثلاً: إلغاء 05xxxxxxx' });
+          await sock.sendMessage(sendTo, { text: 'أكتب الرقم كامل، مثال:\nالغاء 201093122475' });
         }
+        lastReply = 'DISABLE: ' + num;
+        continue;
+      }
+      if (tlow.startsWith('تفعيل ') || tlow.startsWith('تشغيل ')) {
+        const num = tlow.split(' ')[1];
+        if (num) {
+          aiDisabledPhones = aiDisabledPhones.filter(p => p !== num);
+          saveAiDisabledPhones(aiDisabledPhones);
+          await sock.sendMessage(sendTo, { text: '✅ تم تفعيل الزكاء للرقم ' + num + '. هيرد عليه تاني.' });
+        }
+        lastReply = 'ENABLE: ' + num;
+        continue;
+      }
+      if (aiMode === 'manual') {
+        console.log('Manual mode, skipping reply from: ' + sender);
         continue;
       }
 
-      if (aiMode !== 'ai') continue;
+      console.log('Processing from ' + sender + ' (' + from + '): "' + text.substring(0,50) + '"');
 
-      if (text.includes('أسنان') || text.includes('أسنان ماكينة') || text.includes('طقم أسنان')) {
-        await sock.sendMessage(sendTo, { text: 'طقم الأسنان موجود ومتوفر للبيع ومتاح في الورشة علطول يا فندم، تنورنا في أي وقت!' });
-        lastBranch = 'KEYWORD_DENTURE';
-        lastReply = 'طقم الأسنان موجود...';
+      // New customer (no pushName AND no history) → send equipment list once
+      const hasPushName = msg.pushName && sender !== 'Unknown' && sender.trim() !== '';
+      console.log('hasPushName=' + hasPushName + ' sender="' + sender + '" pushName="' + (msg.pushName||'') + '"');
+      if (!hasPushName && history.length <= 1) {
+        const eqList = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
+          '📍 شارع الحج، مكة المكرمة، الصنايعية الجديدة\n\n' +
+          'قائمة الإيجار (ريال/اليوم):\n' +
+          '1. ماكينة سن 2 بوصة ← 100 ريال\n' +
+          '2. ماكينة سن 3 بوصة ← 120 ريال\n' +
+          '3. مكنة جروف ← 80 ريال\n' +
+          '4. خواشة مواسير ← 50 ريال\n' +
+          '5. مكنة باركود HDP ← 200 ريال\n' +
+          '6. مكنة ضغط مياه (كهرباء) ← 50 ريال\n' +
+          '7. مكنة ضغط مياه (ديزل) ← 70 ريال\n' +
+          '8. مكنة HDP راس في راس ← 200 ريال\n' +
+          '9. مولد كهرباء 3 كيلو ← 100 ريال\n' +
+          '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال\n\n' +
+          'للطلب أو الاستفسار: كلم المهندس ماهر البدري';
+        lastBranch = 'NEW_CUSTOMER';
+        pushNameVal = msg.pushName || '(none)';
+        lastReply = 'NEW CUSTOMER: sent equipment list';
+        await sock.sendMessage(sendTo, { text: eqList }).catch(() => {});
+        try { await sock.sendMessage(ADMIN_JID, { text: eqList }); } catch(e) {}
+        history.push({ role: 'assistant', content: eqList });
+        if (history.length > MAX_HISTORY) history.shift();
+        try { saveHistory(); } catch(e) {}
         continue;
       }
 
-      if (/موتور|طرمبة|طرمبة زيت|لقمة|لوقم|تصليح|اصلاح|اصلح|اصلحها|عطلانة|عطلان|عطل|صيانة|طريقة تصليح|مكنه|ماكنة|عندي مكنه/.test(text)) {
-        await sock.sendMessage(sendTo, { text: 'أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه.' });
-        lastBranch = 'KEYWORD_MAINTENANCE';
-        lastReply = 'أه قطع الغيار موجودة...';
-        continue;
+      const family = familyContacts.find(f => f.phone && (from.includes(f.phone) || senderPhone.includes(f.phone)));
+      let familyContext = '';
+      if (family) {
+        familyContext = ' [هذا من العائلة: ' + family.relationship + ' (' + family.name + '). رد طبيعي بدون تعريف بنفسك، ' + family.style + ']';
+      } else {
+        // Pass customer name to AI so it addresses them by name
+        familyContext = ' [اسم العميل: ' + sender + '. ناديه باسمه في الرد وقل "مرحبا ' + sender + '"]';
       }
 
-      if (text.includes('التكلفة كام') || text.includes('تكلف صيانة كام') || text.includes('حسابها كام')) {
-        await sock.sendMessage(sendTo, { text: 'يا فندم التكلفة دي بتكون حسب ما المهندس ماهر يشوف المكنة ويعاين العطل بنفسه، أو أنا بجيب لك الأسعار من المهندس علطول. تشرفنا في الورشة!' });
-        lastBranch = 'KEYWORD_COST';
-        lastReply = 'يا فندم التكلفة دي...';
-        continue;
-      }
-
+      lastBranch = 'AI_CALL';
+      pushNameVal = msg.pushName || '(none)';
       let replyText = '';
-      try {
-        replyText = await callAIGemini(SYSTEM_PROMPT, history.slice(0, -1), text);
-        lastBranch = 'GEMINI';
-      } catch (geminiErr) {
-        console.error('Gemini failed, trying Mistral:', geminiErr);
+      lastError = '';
+      const h = history.slice(-10, -1);
+      // Gemini first (5 key rotation)
+      replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
+      if (replyText) {
+        lastBranch = 'GEMINI_OK';
+      } else {
+        // Try Cloudflare Workers AI
+        replyText = await callCloudflare(SYSTEM_PROMPT, h, familyContext + '\n' + text);
+        if (replyText) {
+          lastBranch = 'CLOUDFLARE_OK';
+        } else {
+        // Try Groq once
         try {
-          replyText = await callMistral(SYSTEM_PROMPT, history.slice(0, -1), text);
-          lastBranch = 'MISTRAL';
-        } catch (mistralErr) {
-          console.error('Mistral failed, trying Cloudflare:', mistralErr);
-          try {
-            replyText = await callCloudflare(SYSTEM_PROMPT, history.slice(0, -1), text);
-            lastBranch = 'CLOUDFLARE';
-          } catch (cfErr) {
-            console.error('Cloudflare failed, trying Groq:', cfErr);
-            try {
-              replyText = await callAI(SYSTEM_PROMPT, history.slice(0, -1), text);
-              lastBranch = 'GROQ';
-            } catch (groqErr) {
-              console.error('All AI backends failed.');
+          const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
+          for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
+          msgs.push({ role: 'user', content: familyContext + '\n' + text });
+          const c2 = new AbortController();
+          const t2 = setTimeout(() => c2.abort(), 30000);
+          const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+            signal: c2.signal
+          });
+          clearTimeout(t2);
+          if (r2.status === 200) {
+            const j2 = await r2.json();
+            replyText = j2.choices?.[0]?.message?.content || '';
+            lastBranch = 'GROQ_OK';
+          } else {
+            lastError = 'GROQ HTTP ' + r2.status;
+          }
+        } catch (err) {
+          if (!lastError) lastError = err.message;
+          console.error('Groq error: ' + err.message);
+        }
+      }
+      }
+
+      if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
+      lastReply = replyText.substring(0, 100);
+      await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
+      await sock.sendMessage(ADMIN_JID, { text: replyText }).catch(() => {});
+      history.push({ role: 'assistant', content: replyText });
+      if (history.length > MAX_HISTORY) history.shift();
+      try { saveHistory(); } catch(e) {}
+      if (isVoice && !family) {
+        try {
+          const t = replyText.substring(0, 200);
+          const url = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(t) + '&tl=ar&client=tw-ob';
+          const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+          if (resp.ok) {
+            const buf = Buffer.from(await resp.arrayBuffer());
+            if (buf.length > 500) {
+              await sock.sendMessage(sendTo, { audio: buf, mimetype: 'audio/mpeg' });
             }
           }
-        }
+        } catch (e) { console.error('TTS error: ' + e.message); }
       }
-
-      if (replyText) {
-        await sock.sendMessage(sendTo, { text: replyText });
-        history.push({ role: 'assistant', content: replyText });
-        if (history.length > MAX_HISTORY) history.shift();
-        saveHistory();
-        lastReply = replyText;
-      }
-
-    } } catch(e) { console.error('Upsert loop error: ' + e.message); }
+      console.log('Replied: ' + replyText.substring(0, 50));
+    } } catch(e) { lastError = 'FATAL: ' + e.message; console.error('FATAL: ' + e.message); }
   });
 }
 
-startBridge();
-startKeepAlive();
-
-const server = app.listen(BRIDGE_PORT, () => {
-  console.log(`Bridge server running on port ${BRIDGE_PORT}`);
+app.listen(BRIDGE_PORT, () => {
+  console.log('Bridge API on http://localhost:' + BRIDGE_PORT);
 });
-server.timeout = 120000;
+startKeepAlive();
+startBridge().catch(console.error);
