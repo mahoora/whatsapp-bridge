@@ -13,6 +13,7 @@ const { exec } = require('child_process');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
 
+
 // Keep Render awake + save history every 5 minutes
 function startKeepAlive() {
   setInterval(() => {
@@ -136,7 +137,7 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدا
 '  * الأخ: أسئلة شخصية واطمئنان وسلام\n' +
 '  * أولاد الإخوة: رد حنون مناسب\n' +
   '  * الأم/الأب: رد مليء بالاحترام والبر\n' +
-  '  * بشكل عام: ليسوا عملاء, رد بطريقة أسرية\n\n' +
+  '  * بشكل عام: ليسوا عملاء، رد بطريقة أسرية\n\n' +
   '** مهم: قائمة العائلة أدناه للرجوع لها فقط إذا ذُكر أن المتصل من العائلة. لا تفترض أن كل من يرسل هو من العائلة **\n' +
   '  * العملاء (غير العائلة): رد باللهجة المصرية فقط وتعامل معهم كعملاء\n' +
   '  * العائلة: رد بنفس لهجة المتصل\n' +
@@ -156,7 +157,7 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدا
 '** قسم طقم الأسنان **\n' +
 'إذا احتوت الرسالة على (أسنان، أسنان ماكينة، طقم أسنان): رد فوراً بدون مقدمات: "طقم الأسنان موجود ومتوفر للبيع ومتاح في الورشة علطول يا فندم، تنورنا في أي وقت!"\n\n' +
 '** قسم الصيانة والقطع الكبيرة **\n' +
-'إذا احتوت الرسالة على (موتور، طرمبة، طرمبة زيت، لقمة، لوقم، تصليح، اصلاح، اصلح، اصلحها، عطلانة، عطلان، عطل، صيانة، طريقة تصليح، مكنه، ماكنة، عندي مكنه): رد فوراً: "أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه."\n\n' +
+'إذا احتوت الرسالة على (موتور، طرمبة، طرمبة زيت، لقمة، لوقم، تصليح، اصلاح، اصلح، اصلحها، عطلانة، عطلان، عطل، صيانة، طريقة تصليح sabotage، مكنه، ماكنة، عندي مكنه): رد فوراً: "أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه."\n\n' +
 '** قسم تكلفة الصيانة **\n' +
 'إذا سأل عن (التكلفة كام، تكلف صيانة كام، حسابها كام): رد فوراً: "يا فندم التكلفة دي بتكون حسب ما المهندس ماهر يشوف المكنة ويعاين العطل بنفسه، أو أنا بجيب لك الأسعار من المهندس علطول. تشرفنا في الورشة!"\n\n' +
 '** انضمام الجروب **\n' +
@@ -325,7 +326,7 @@ function transcribeAudio(audioBuffer) {
     const opts = {
       hostname: 'api.groq.com', path: '/openai/v1/audio/transcriptions',
       method: 'POST', timeout: 30000,
-      headers: form.getHeaders({ 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY })
+        headers: form.getHeaders({ 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY })
     };
     const req = https.request(opts, res => {
       let b = '';
@@ -345,6 +346,7 @@ function loadHistory() {
     const data = JSON.parse(fs.readFileSync(HISTORY_FILE));
     return new Map(Object.entries(data));
   } catch (e) {
+    // Try loading from env var as fallback
     try {
       const envData = process.env.HISTORY_JSON;
       if (envData) return new Map(Object.entries(JSON.parse(Buffer.from(envData, 'base64').toString())));
@@ -376,23 +378,11 @@ let pushNameVal = '';
 let restartTimer = null;
 const lidToJid = new Map();
 
-// دالة مخصصة لإرسال الرسائل مع محاكاة الكتابة والانتظار 3 ثوانٍ لحماية الحساب من الحظر
-async function sendSmartMessage(sock, jid, text) {
-  try {
-    await sock.sendPresenceUpdate('composing', jid).catch(() => {});
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    await sock.sendPresenceUpdate('paused', jid).catch(() => {});
-    await sock.sendMessage(jid, { text });
-  } catch (err) {
-    console.error('Error in sendSmartMessage:', err.message);
-  }
-}
-
 app.post('/send', async (req, res) => {
   const { to, text } = req.body;
   if (!to || !text) return res.status(400).json({ error: 'Missing fields' });
   try {
-    await sendSmartMessage(currentSock, to, text);
+    await currentSock.sendMessage(to, { text });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -417,7 +407,7 @@ app.post('/order', async (req, res) => {
   try {
     const order = ordersDb.createOrder({ customerName, customerPhone, items, notes, totalPrice });
     const summary = `🛒 طلب جديد #${order.id}\nالعميل: ${customerName}\nالهاتف: ${customerPhone}\nالمنتجات: ${items.map(i => i.name).join('، ')}\nالإجمالي: ${totalPrice || 'يحتسب'} ريال\nالحالة: قيد المراجعة`;
-    sendSmartMessage(currentSock, ADMIN_JID, summary).catch(() => {});
+    currentSock.sendMessage(ADMIN_JID, { text: summary }).catch(() => {});
     res.json(order);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -598,7 +588,7 @@ app.get('/enable/:num', (req, res) => {
   res.redirect('/admin');
 });
 app.get('/', (req, res) => {
-  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>maher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!wsConnected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
+  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!wsConnected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
 });
 
 async function startBridge() {
@@ -610,6 +600,22 @@ async function startBridge() {
     logger: pino({ level: 'silent' }),
     browser: ['Chrome', 'Chrome', '120.0'],
   });
+
+  // 👇 تعديل احترافي: حقن ميزة جاري الكتابة + الانتظار مباشرة جوه دالة الإرسال الأصلية للبوت
+  const originalSendMessage = sock.sendMessage.bind(sock);
+  sock.sendMessage = async (jid, content, options) => {
+    try {
+      if (jid && !jid.endsWith('@g.us') && content && content.text) {
+        await sock.sendPresenceUpdate('composing', jid).catch(() => {});
+        await new Promise(r => setTimeout(r, 3000));
+        await sock.sendPresenceUpdate('paused', jid).catch(() => {});
+      }
+    } catch (e) {
+      console.error('Presence error:', e.message);
+    }
+    return originalSendMessage(jid, content, options);
+  };
+
   currentSock = sock;
 
   sock.ev.on('creds.update', () => { saveCreds(); saveCredsToEnv(); });
@@ -633,7 +639,7 @@ async function startBridge() {
   });
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
-    try { for (const msg of messages) {
+        try { for (const msg of messages) {
       if (!msg.key || msg.key.fromMe) continue;
       const jid = msg.key.remoteJid;
       if (jid.endsWith('@g.us') || jid === 'status@broadcast' || jid.endsWith('@newsletter')) continue;
@@ -641,7 +647,7 @@ async function startBridge() {
       let text = msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
         msg.message?.imageMessage?.caption ||
-        ''
+        '';
 
       const from = jid;
       let sendTo = from;
@@ -684,13 +690,13 @@ async function startBridge() {
       if (tlow === 'يدوي' || tlow === 'يدي') {
         lastBranch = 'CMD_MANUAL';
         aiMode = 'manual';
-        await sendSmartMessage(sock, sendTo, '✅ تم التحويل إلى الرد اليدوي. أنت هترد بنفسك.');
+        await sock.sendMessage(sendTo, { text: '✅ تم التحويل إلى الرد اليدوي. أنت هترد بنفسك.' });
         lastReply = 'MODE: manual';
         continue;
       }
       if (tlow === 'تلقائي' || tlow === 'زكاء') {
         aiMode = 'ai';
-        await sendSmartMessage(sock, sendTo, '✅ تم التشغيل. الزكاء هيرد على الرسايل.');
+        await sock.sendMessage(sendTo, { text: '✅ تم التشغيل. الزكاء هيرد على الرسايل.' });
         lastReply = 'MODE: ai';
         continue;
       }
@@ -712,27 +718,42 @@ async function startBridge() {
             }]
           });
         } catch(e) {
-          await sendSmartMessage(sock, sendTo, 'الوضع: ' + st + '\nأرسل:\n"يدوي" → رد يدوي\n"تلقائي" → رد الزكاء');
+          await sock.sendMessage(sendTo, { text: 'الوضع: ' + st + '\nأرسل:\n"يدوي" → رد يدوي\n"تلقائي" → رد الزكاء' });
         }
         lastReply = 'MENU';
         continue;
       }
-      
+      if (tlow.startsWith('الغاء ') || tlow.startsWith('إلغاء ') || tlow.startsWith('منع ')) {
+        const num = tlow.split(' ')[1]?.replace(/[^0-9]/g, '');
+        if (num && num.length >= 5) {
+          if (!aiDisabledPhones.includes(num)) { aiDisabledPhones.push(num); saveAiDisabledPhones(aiDisabledPhones); }
+          await sock.sendMessage(sendTo, { text: `🚫 تم إلغاء تفعيل الذكاء الاصطناعي للرقم: ${num}` });
+        } else {
+          await sock.sendMessage(sendTo, { text: '❌ الرقم غير صحيح. اكتب مثلاً: إلغاء 05xxxxxxx' });
+        }
+        continue;
+      }
+
       if (aiMode !== 'ai') continue;
 
-      // فحص الكلمات المفتاحية الثابتة قبل تشغيل الذكاء الاصطناعي
       if (text.includes('أسنان') || text.includes('أسنان ماكينة') || text.includes('طقم أسنان')) {
-        await sendSmartMessage(sock, sendTo, 'طقم الأسنان موجود ومتوفر للبيع ومتاح في الورشة علطول يا فندم، تنورنا في أي وقت!');
+        await sock.sendMessage(sendTo, { text: 'طقم الأسنان موجود ومتوفر للبيع ومتاح في الورشة علطول يا فندم، تنورنا في أي وقت!' });
+        lastBranch = 'KEYWORD_DENTURE';
+        lastReply = 'طقم الأسنان موجود...';
         continue;
       }
 
       if (/موتور|طرمبة|طرمبة زيت|لقمة|لوقم|تصليح|اصلاح|اصلح|اصلحها|عطلانة|عطلان|عطل|صيانة|طريقة تصليح|مكنه|ماكنة|عندي مكنه/.test(text)) {
-        await sendSmartMessage(sock, sendTo, 'أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه.');
+        await sock.sendMessage(sendTo, { text: 'أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه.' });
+        lastBranch = 'KEYWORD_MAINTENANCE';
+        lastReply = 'أه قطع الغيار موجودة...';
         continue;
       }
 
       if (text.includes('التكلفة كام') || text.includes('تكلف صيانة كام') || text.includes('حسابها كام')) {
-        await sendSmartMessage(sock, sendTo, 'يا فندم التكلفة دي بتكون حسب ما المهندس ماهر يشوف المكنة ويعاين العطل بنفسه، أو أنا بجيب لك الأسعار من المهندس علطول. تشرفنا في الورشة!');
+        await sock.sendMessage(sendTo, { text: 'يا فندم التكلفة دي بتكون حسب ما المهندس ماهر يشوف المكنة ويعاين العطل بنفسه، أو أنا بجيب لك الأسعار من المهندس علطول. تشرفنا في الورشة!' });
+        lastBranch = 'KEYWORD_COST';
+        lastReply = 'يا فندم التكلفة دي...';
         continue;
       }
 
@@ -763,7 +784,7 @@ async function startBridge() {
       }
 
       if (replyText) {
-        await sendSmartMessage(sock, sendTo, replyText);
+        await sock.sendMessage(sendTo, { text: replyText });
         history.push({ role: 'assistant', content: replyText });
         if (history.length > MAX_HISTORY) history.shift();
         saveHistory();
