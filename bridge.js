@@ -24,6 +24,7 @@ const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
 const ADMIN_JID = process.env.ADMIN_JID || '966595510125@s.whatsapp.net';
 let latestQr = null;
+let wsConnected = false; // تعريف المتغير لتتبع الحالة بدقة
 
 function loadCreds() {
   const v = process.env.CREDS_JSON;
@@ -308,7 +309,6 @@ async function callAIGemini(systemPrompt, history, userMsg) {
   return null;
 }
 
-// Persistent conversation memory: saved to file, survives restarts
 const HISTORY_FILE = './conversation-history.json';
 const MAX_HISTORY = 30;
 let conversationHistory = loadHistory();
@@ -366,7 +366,6 @@ function saveHistory() {
 const app = express();
 app.use(express.json());
 let currentSock = null;
-let wsConnected = false;
 let msgCount = 0;
 let lastError = '';
 let lastFrom = '';
@@ -391,12 +390,20 @@ app.get('/status', (req, res) => {
   res.json({ connected: wsConnected, user: currentSock?.user?.id || null });
 });
 
-// إظهار الباركود المباشر من خلال الرابط المطلوب دائمًا وبدون مشاكل كاش
+// تعديل جلب الباركود الفوري المباشر لمنع التعليق
 app.get('/qr', async (req, res) => {
-  if (wsConnected) return res.send('<h1>✅ البوت متصل بالواتساب ومستعد للعمل!</h1>');
-  if (!latestQr) return res.status(404).send('<h1>الباركود بيحمل.. انتظر ثواني وسوي تحديث للصفحة</h1>');
-  res.setHeader('Content-Type', 'image/png');
-  res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
+  if (wsConnected) {
+    return res.send('<h1>✅ البوت متصل بالواتساب ومستعد للعمل!</h1>');
+  }
+  if (!latestQr) {
+    return res.send('<h1>الباركود يتم توليده الآن.. يرجى إعادة تحديث الصفحة بعد 3 ثوانٍ</h1>');
+  }
+  try {
+    res.setHeader('Content-Type', 'image/png');
+    return res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
+  } catch (e) {
+    return res.status(500).send('<h1>خطأ في إنتاج صورة الباركود</h1>');
+  }
 });
 
 app.post('/order', async (req, res) => {
@@ -588,8 +595,8 @@ app.get('/enable/:num', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  if (!wsConnected && latestQr) {
-    return res.redirect('/qr'); // توجيه تلقائي فوري لرابط الباركود لو البوت مش متصل
+  if (!wsConnected) {
+    return res.redirect('/qr'); // توجيه مباشر لصفحة الباركود فوراً لو البوت مش متصل
   }
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div><p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
 });
@@ -610,10 +617,12 @@ async function startBridge() {
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
       latestQr = qr;
+      wsConnected = false; // تحديث دقيق للحالة عند ظهور باركود جديد
       qrcode.generate(qr, { small: true });
     }
     if (connection === 'open') {
       wsConnected = true;
+      latestQr = null; // تصفير الباركود فور نجاح الاتصال
       console.log('WhatsApp connected! ' + (sock.user?.id || ''));
     }
     if (connection === 'close') {
