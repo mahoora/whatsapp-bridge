@@ -685,7 +685,7 @@ async function startBridge() {
         continue;
       }
       if (tlow === 'قائمة' || tlow === 'اعدادات' || tlow === 'menu') {
-        const st = aiMode === 'ai' ? 'تلقائي (الزكاء)' : 'يدوي';
+        const st = aiMode === 'ai' ? 'تلقائي (الزكاء)' : 'ماهر';
         try {
           await sock.sendMessage(sendTo, {
             text: 'الوضع الحالي: ' + st,
@@ -825,8 +825,9 @@ async function startBridge() {
 
       if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
       lastReply = replyText.substring(0, 100);
+      await sock.sendPresenceUpdate('composing', sendTo);
+      await new Promise(r => setTimeout(r, 9000));
       await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
-      await sock.sendMessage(ADMIN_JID, { text: replyText }).catch(() => {});
       history.push({ role: 'assistant', content: replyText });
       if (history.length > MAX_HISTORY) history.shift();
       try { saveHistory(); } catch(e) {}
