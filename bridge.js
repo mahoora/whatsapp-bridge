@@ -714,8 +714,12 @@ async function startBridge() {
             aiDisabledPhones.push(num);
             saveAiDisabledPhones(aiDisabledPhones);
           }
+          await sock.sendPresenceUpdate('composing', sendTo);
+          await new Promise(r => setTimeout(r, 3000));
           await sock.sendMessage(sendTo, { text: '✅ تم إيقاف الزكاء عن الرقم ' + num + '. أنت هترد عليه.' });
         } else {
+          await sock.sendPresenceUpdate('composing', sendTo);
+          await new Promise(r => setTimeout(r, 3000));
           await sock.sendMessage(sendTo, { text: 'أكتب الرقم كامل، مثال:\nالغاء 201093122475' });
         }
         lastReply = 'DISABLE: ' + num;
