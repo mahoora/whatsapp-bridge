@@ -13,6 +13,7 @@ const { exec } = require('child_process');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
 
+
 // Keep Render awake + save history every 5 minutes
 function startKeepAlive() {
   setInterval(() => {
@@ -24,7 +25,6 @@ const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
 const ADMIN_JID = process.env.ADMIN_JID || '966595510125@s.whatsapp.net';
 let latestQr = null;
-let wsConnected = false; // تعريف المتغير لتتبع الحالة بدقة
 
 function loadCreds() {
   const v = process.env.CREDS_JSON;
@@ -157,7 +157,7 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدا
 '** قسم طقم الأسنان **\n' +
 'إذا احتوت الرسالة على (أسنان، أسنان ماكينة، طقم أسنان): رد فوراً بدون مقدمات: "طقم الأسنان موجود ومتوفر للبيع ومتاح في الورشة علطول يا فندم، تنورنا في أي وقت!"\n\n' +
 '** قسم الصيانة والقطع الكبيرة **\n' +
-'إذا احتوت الرسالة على (موتور، طرمبة، طرمبة زيت، لقمة، لوقم، تصليح, اصلاح، اصلح، اصلحها، عطلانة، عطلان، عطل، صيانة، طريقة تصليح، مكنه، ماكنة، عندي مكنه): رد فوراً: "أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه."\n\n' +
+'إذا احتوت الرسالة على (موتور، طرمبة، طرمبة زيت، لقمة، لوقم، تصليح، اصلاح، اصلح، اصلحها، عطلانة، عطلان، عطل، صيانة، طريقة تصليح، مكنه، ماكنة، عندي مكنه): رد فوراً: "أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه."\n\n' +
 '** قسم تكلفة الصيانة **\n' +
 'إذا سأل عن (التكلفة كام، تكلف صيانة كام، حسابها كام): رد فوراً: "يا فندم التكلفة دي بتكون حسب ما المهندس ماهر يشوف المكنة ويعاين العطل بنفسه، أو أنا بجيب لك الأسعار من المهندس علطول. تشرفنا في الورشة!"\n\n' +
 '** انضمام الجروب **\n' +
@@ -309,6 +309,7 @@ async function callAIGemini(systemPrompt, history, userMsg) {
   return null;
 }
 
+// Persistent conversation memory: saved to file, survives restarts
 const HISTORY_FILE = './conversation-history.json';
 const MAX_HISTORY = 30;
 let conversationHistory = loadHistory();
@@ -345,6 +346,7 @@ function loadHistory() {
     const data = JSON.parse(fs.readFileSync(HISTORY_FILE));
     return new Map(Object.entries(data));
   } catch (e) {
+    // Try loading from env var as fallback
     try {
       const envData = process.env.HISTORY_JSON;
       if (envData) return new Map(Object.entries(JSON.parse(Buffer.from(envData, 'base64').toString())));
@@ -366,6 +368,7 @@ function saveHistory() {
 const app = express();
 app.use(express.json());
 let currentSock = null;
+let wsConnected = false;
 let msgCount = 0;
 let lastError = '';
 let lastFrom = '';
@@ -390,20 +393,10 @@ app.get('/status', (req, res) => {
   res.json({ connected: wsConnected, user: currentSock?.user?.id || null });
 });
 
-// تعديل جلب الباركود الفوري المباشر لمنع التعليق
 app.get('/qr', async (req, res) => {
-  if (wsConnected) {
-    return res.send('<h1>✅ البوت متصل بالواتساب ومستعد للعمل!</h1>');
-  }
-  if (!latestQr) {
-    return res.send('<h1>الباركود يتم توليده الآن.. يرجى إعادة تحديث الصفحة بعد 3 ثوانٍ</h1>');
-  }
-  try {
-    res.setHeader('Content-Type', 'image/png');
-    return res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
-  } catch (e) {
-    return res.status(500).send('<h1>خطأ في إنتاج صورة الباركود</h1>');
-  }
+  if (!latestQr) return res.status(404).send('No QR available yet. Wait for the bridge to start.');
+  res.setHeader('Content-Type', 'image/png');
+  res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
 });
 
 app.post('/order', async (req, res) => {
@@ -558,6 +551,7 @@ let lastSendTestMsg = '';
 app.get('/admin', (req, res) => {
   const mode = aiMode === 'ai' ? '🤖' : '🖐';
   const modeText = aiMode === 'ai' ? 'رد الزكاء' : 'رد يدوي';
+  const nextMode = aiMode === 'ai' ? 'manual' : 'ai';
   const disabledList = aiDisabledPhones.map(p => `<li>${p} <a href="/enable/${encodeURIComponent(p)}" style="color:#4caf50;text-decoration:none">【تفعيل】</a></li>`).join('');
   let convList = '';
   for (const [jid] of conversationHistory) {
@@ -593,12 +587,8 @@ app.get('/enable/:num', (req, res) => {
   saveAiDisabledPhones(aiDisabledPhones);
   res.redirect('/admin');
 });
-
 app.get('/', (req, res) => {
-  if (!wsConnected) {
-    return res.redirect('/qr'); // توجيه مباشر لصفحة الباركود فوراً لو البوت مش متصل
-  }
-  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div><p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
+  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!wsConnected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
 });
 
 async function startBridge() {
@@ -617,12 +607,10 @@ async function startBridge() {
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
       latestQr = qr;
-      wsConnected = false; // تحديث دقيق للحالة عند ظهور باركود جديد
       qrcode.generate(qr, { small: true });
     }
     if (connection === 'open') {
       wsConnected = true;
-      latestQr = null; // تصفير الباركود فور نجاح الاتصال
       console.log('WhatsApp connected! ' + (sock.user?.id || ''));
     }
     if (connection === 'close') {
@@ -635,9 +623,7 @@ async function startBridge() {
   });
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
-    try { 
-      await new Promise(r => setTimeout(r, 2000)); 
-      for (const msg of messages) {
+        try { for (const msg of messages) {
       if (!msg.key || msg.key.fromMe) continue;
       const jid = msg.key.remoteJid;
       if (jid.endsWith('@g.us') || jid === 'status@broadcast' || jid.endsWith('@newsletter')) continue;
@@ -699,7 +685,7 @@ async function startBridge() {
         continue;
       }
       if (tlow === 'قائمة' || tlow === 'اعدادات' || tlow === 'menu') {
-        const st = aiMode === 'ai' ? 'تلقائي (الزكاء)' : 'ماهر';
+        const st = aiMode === 'ai' ? 'تلقائي (الزكاء)' : 'يدوي';
         try {
           await sock.sendMessage(sendTo, {
             text: 'الوضع الحالي: ' + st,
@@ -728,12 +714,8 @@ async function startBridge() {
             aiDisabledPhones.push(num);
             saveAiDisabledPhones(aiDisabledPhones);
           }
-          await sock.sendPresenceUpdate('composing', sendTo);
-          await new Promise(r => setTimeout(r, 9000));
           await sock.sendMessage(sendTo, { text: '✅ تم إيقاف الزكاء عن الرقم ' + num + '. أنت هترد عليه.' });
         } else {
-          await sock.sendPresenceUpdate('composing', sendTo);
-          await new Promise(r => setTimeout(r, 9000));
           await sock.sendMessage(sendTo, { text: 'أكتب الرقم كامل، مثال:\nالغاء 201093122475' });
         }
         lastReply = 'DISABLE: ' + num;
@@ -790,6 +772,7 @@ async function startBridge() {
       if (family) {
         familyContext = ' [هذا من العائلة: ' + family.relationship + ' (' + family.name + '). رد طبيعي بدون تعريف بنفسك، ' + family.style + ']';
       } else {
+        // Pass customer name to AI so it addresses them by name
         familyContext = ' [اسم العميل: ' + sender + '. ناديه باسمه في الرد وقل "مرحبا ' + sender + '"]';
       }
 
@@ -803,10 +786,12 @@ async function startBridge() {
       if (replyText) {
         lastBranch = 'GEMINI_OK';
       } else {
+        // Try Cloudflare Workers AI
         replyText = await callCloudflare(SYSTEM_PROMPT, h, familyContext + '\n' + text);
         if (replyText) {
           lastBranch = 'CLOUDFLARE_OK';
         } else {
+        // Try Groq once
         try {
           const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
           for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
@@ -836,10 +821,8 @@ async function startBridge() {
 
       if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
       lastReply = replyText.substring(0, 100);
-      await sock.sendPresenceUpdate('composing', sendTo);
-      await new Promise(r => setTimeout(r, 9000));
-      await sock.readMessages([msg.key]).catch(() => {});
       await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
+      await sock.sendMessage(ADMIN_JID, { text: replyText }).catch(() => {});
       history.push({ role: 'assistant', content: replyText });
       if (history.length > MAX_HISTORY) history.shift();
       try { saveHistory(); } catch(e) {}
