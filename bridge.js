@@ -2,7 +2,6 @@ require('dotenv').config();
 const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
-const qrcodeTerm = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const https = require('https');
 const fs = require('fs');
@@ -17,6 +16,14 @@ function startKeepAlive() {
   setInterval(() => {
     https.get(RENDER_URL + '/status', res => { res.resume(); }).on('error', () => {});
   }, 240000);
+}
+
+// تنظيف الكاش القديم المسبب للتعذر فوراً عند إعادة التشغيل
+if (fs.existsSync(AUTH_DIR)) {
+  try {
+    fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+    console.log('Cleaned old auth cache');
+  } catch(e){}
 }
 
 const DEFAULT_FALLBACK_TEXT = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
@@ -34,9 +41,8 @@ const DEFAULT_FALLBACK_TEXT = 'مرحبًا بك في ورشة ماهر البد
   '10. مقص 8 بوصة لقص المواسير الحديد : 100 ريال\n\n' +
   'لأي استفسار أو صيانة وتصليح ماكينات، تشرفنا في الورشة أو كلم المهندس ماهر البدري.';
 
-const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق في مكة. رد بالعامية المصرية وبشكل مختصر ومفيد جداً وبدون استخدام رموز خاصة قد تنكسر في التشفير. نادِ العميل باسمه أول الرد.';
+const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق في مكة. رد بالعامية المصرية وبشكل مختصر ومفيد جداً. نادِ العميل باسمه أول الرد.';
 
-// جلب مفاتيح جيميناي بالاسم الصحيح المتطابق مع لوحتك لضمان التشغيل
 const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 let keyIndex = 0;
 
@@ -75,7 +81,7 @@ let wsConnected = false;
 
 app.get('/status', (req, res) => res.json({ connected: wsConnected }));
 app.get('/qr', async (req, res) => {
-  if (!latestQr) return res.send('<h1>الباركود بيحمل، انتظر 5 ثواني وحدث الصفحة</h1>');
+  if (!latestQr) return res.send('<h1>الباركود الجديد بيفتح.. انتظر ثواني وحدث الصفحة</h1>');
   res.setHeader('Content-Type', 'image/png');
   res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
 });
@@ -89,16 +95,16 @@ async function startBridge() {
   const sock = makeWASocket({
     auth: state,
     logger: pino({ level: 'silent' }),
-    browser: ['Mac OS', 'Chrome', '120.0.0.0'],
+    browser: ['Ubuntu', 'Chrome', '110.0.0.0'], // تعريف رسمي نظيف ومقبول فوراً
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 0,
+    keepAliveIntervalMs: 10000
   });
 
   sock.ev.on('creds.update', saveCreds);
   
   sock.ev.on('connection.update', ({ connection, qr }) => {
-    if (qr) {
-      latestQr = qr;
-      qrcodeTerm.generate(qr, { small: true });
-    }
+    if (qr) latestQr = qr;
     if (connection === 'open') {
       wsConnected = true;
       latestQr = null;
@@ -120,7 +126,6 @@ async function startBridge() {
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         if (!text) continue;
 
-        // تشغيل جيميناي أولاً بناءً على مفاتيحك المتاحة
         let replyText = await callAIGemini([], text);
         if (!replyText) replyText = DEFAULT_FALLBACK_TEXT;
 
