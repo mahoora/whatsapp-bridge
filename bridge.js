@@ -2,7 +2,7 @@ require('dotenv').config();
 const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
-const qrcodeTerm = require('qrcode-terminal'); // عشان يطبع الباركود في اللوج علطول
+const qrcodeTerm = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const https = require('https');
 const fs = require('fs');
@@ -21,32 +21,51 @@ function startKeepAlive() {
 
 const DEFAULT_FALLBACK_TEXT = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
   '📍 شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
+  'قائمة الإيجار والأسعار (ريال/اليوم):\n' +
+  '1. ماكينة سن 2 بوصة : 100 ريال\n' +
+  '2. ماكينة سن 3 بوصة : 120 ريال\n' +
+  '3. مكنة جروف : 80 ريال\n' +
+  '4. خواشة مواسير : 50 ريال\n' +
+  '5. مكنة باركود HDP : 200 ريال\n' +
+  '6. مكنة ضغط مياه (كهرباء) : 50 ريال\n' +
+  '7. مكنة ضغط مياه (ديزل) : 70 ريال\n' +
+  '8. مكنة HDP راس في راس : 200 ريال\n' +
+  '9. مولد كهرباء 3 كيلو : 100 ريال\n' +
+  '10. مقص 8 بوصة لقص المواسير الحديد : 100 ريال\n\n' +
   'لأي استفسار أو صيانة وتصليح ماكينات، تشرفنا في الورشة أو كلم المهندس ماهر البدري.';
 
-const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق في مكة. رد بالعامية المصرية وبشكل مختصر ومفيد جداً. نادِ العميل باسمه.';
+const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق في مكة. رد بالعامية المصرية وبشكل مختصر ومفيد جداً وبدون استخدام رموز خاصة قد تنكسر في التشفير. نادِ العميل باسمه أول الرد.';
 
-const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || '825fa7e8d2e30bba9b5e52da5c3bb95a';
-const CF_API_TOKEN = process.env.CF_API_TOKEN || 'v76lEul9q6T64_K0_PkaGkZ33gM8L6_iM6f89z5t';
+// جلب مفاتيح جيميناي بالاسم الصحيح المتطابق مع لوحتك لضمان التشغيل
+const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
+let keyIndex = 0;
 
-async function callCloudflare(history, userMsg) {
-  const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
-  for (const m of history) msgs.push({ role: m.role, content: m.content || '' });
-  msgs.push({ role: 'user', content: userMsg });
-  try {
-    const c = new AbortController();
-    const t = setTimeout(() => c.abort(), 8000);
-    const r = await fetch('https://api.cloudflare.com/client/v4/accounts/' + CF_ACCOUNT_ID + '/ai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + CF_API_TOKEN, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', messages: msgs, temperature: 0.7, max_tokens: 512 }),
-      signal: c.signal
-    });
-    clearTimeout(t);
-    if (r.status === 200) {
-      const j = await r.json();
-      return j.choices?.[0]?.message?.content || '';
+async function callAIGemini(history, userMsg) {
+  if (GEMINI_KEYS.length === 0) return null;
+  for (let i = 0; i < GEMINI_KEYS.length; i++) {
+    const idx = (keyIndex + i) % GEMINI_KEYS.length;
+    const apiKey = GEMINI_KEYS[idx];
+    const contents = [];
+    for (const msg of history) contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
+    contents.push({ role: 'user', parts: [{ text: userMsg }] });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 512 } }),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (res.status === 200) {
+        keyIndex = (idx + 1) % GEMINI_KEYS.length;
+        const j = await res.json();
+        return j.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      }
+    } catch (e) {
+      clearTimeout(timer);
     }
-  } catch (e) {}
+  }
   return null;
 }
 
@@ -56,39 +75,38 @@ let wsConnected = false;
 
 app.get('/status', (req, res) => res.json({ connected: wsConnected }));
 app.get('/qr', async (req, res) => {
-  if (!latestQr) return res.status(404).send('<h1>الباركود لسه بيفتح أو تم الاتصال بالفعل.. حدث الصفحة بعد ثواني</h1>');
+  if (!latestQr) return res.send('<h1>الباركود بيحمل، انتظر 5 ثواني وحدث الصفحة</h1>');
   res.setHeader('Content-Type', 'image/png');
   res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
 });
-app.get('/', (req, res) => res.send(`<h1>🔧 البوت واقف مستني الباركود</h1>`));
+app.get('/', (req, res) => {
+  if (wsConnected) return res.send(`<h1>✅ البوت يعمل بنجاح ومربوط بالواتساب</h1>`);
+  res.send(`<h1>🔧 البوت واقف مستني الباركود</h1>`);
+});
 
 async function startBridge() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const sock = makeWASocket({
     auth: state,
     logger: pino({ level: 'silent' }),
-    browser: ['Mac OS', 'Chrome', '120.0.0.0'], // تعديل المتصفح عشان يقبل بسرعة
+    browser: ['Mac OS', 'Chrome', '120.0.0.0'],
   });
 
   sock.ev.on('creds.update', saveCreds);
   
-  sock.ev.on('connection.update', ({ connection, qr, lastDisconnect }) => {
+  sock.ev.on('connection.update', ({ connection, qr }) => {
     if (qr) {
       latestQr = qr;
-      console.log('--- امسح الباركود الجديد من هنا ---');
-      qrcodeTerm.generate(qr, { small: true }); // هيطبع الباركود في لوج ريندر علطول!
+      qrcodeTerm.generate(qr, { small: true });
     }
     if (connection === 'open') {
       wsConnected = true;
       latestQr = null;
-      console.log('✅ تم اتصال واتساب بنجاح يا هندسة!');
+      console.log('✅ تم الاتصال!');
     }
     if (connection === 'close') {
       wsConnected = false;
-      const shouldRestart = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      if (shouldRestart) {
-        setTimeout(startBridge, 10000);
-      }
+      setTimeout(startBridge, 10000);
     }
   });
 
@@ -102,7 +120,8 @@ async function startBridge() {
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         if (!text) continue;
 
-        let replyText = await callCloudflare([], text);
+        // تشغيل جيميناي أولاً بناءً على مفاتيحك المتاحة
+        let replyText = await callAIGemini([], text);
         if (!replyText) replyText = DEFAULT_FALLBACK_TEXT;
 
         await sock.sendPresenceUpdate('composing', jid);
