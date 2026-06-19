@@ -156,7 +156,7 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدا
 '** قسم طقم الأسنان **\n' +
 'إذا احتوت الرسالة على (أسنان، أسنان ماكينة، طقم أسنان): رد فوراً بدون مقدمات: "طقم الأسنان موجود ومتوفر للبيع ومتاح في الورشة علطول يا فندم، تنورنا في أي وقت!"\n\n' +
 '** قسم الصيانة والقطع الكبيرة **\n' +
-'إذا احتوت الرسالة على (موتور، طرمبة، طرمبة زيت، لقمة، لوقم، تصليح، اصلاح، اصلح، اصلحها, عطلانة، عطلان، عطل، صيانة، طريقة تصليح، مكنه، ماكنة، عندي مكنه): رد فوراً: "أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه."\n\n' +
+'إذا احتوت الرسالة على (موتور، طرمبة، طرمبة زيت، لقمة، لوقم، تصليح، اصلاح، اصلح، اصلحها، عطلانة، عطلان، عطل، صيانة، طريقة تصليح، مكنه، ماكنة، عندي مكنه): رد فوراً: "أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه."\n\n' +
 '** قسم تكلفة الصيانة **\n' +
 'إذا سأل عن (التكلفة كام، تكلف صيانة كام، حسابها كام): رد فوراً: "يا فندم التكلفة دي بتكون حسب ما المهندس ماهر يشوف المكنة ويعاين العطل بنفسه، أو أنا بجيب لك الأسعار من المهندس علطول. تشرفنا في الورشة!"\n\n' +
 '** انضمام الجروب **\n' +
@@ -198,9 +198,6 @@ async function callAI(systemPrompt, history, userMsg, retries = 2) {
 
 const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 let keyIndex = 0;
-
-const MISTRAL_KEYS = (process.env.MISTRAL_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
-let mistralKeyIndex = 0;
 
 const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || '';
 const CF_API_TOKEN = process.env.CF_API_TOKEN || '';
@@ -623,22 +620,23 @@ async function startBridge() {
       pushNameVal = msg.pushName || '(none)';
       let replyText = '';
       
-      // هنا تم التصليح (نأخذ الـ history بالكامل ليرى الرسالة الحالية)
       const h = history.slice(-10);
+      // تصحيح تمرير الرسالة: دمج نص الرسالة الحالي مع السياق الموجه للذكاء الاصطناعي
+      const fullUserPrompt = familyContext + '\nالرسالة الحالية: ' + text;
       
       // المحاولة الأولى: Gemini
-      replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext);
+      replyText = await callAIGemini(SYSTEM_PROMPT, h, fullUserPrompt);
       if (replyText) {
         lastBranch = 'GEMINI_OK';
       } else {
         // المحاولة الثانية: Cloudflare
-        replyText = await callCloudflare(SYSTEM_PROMPT, h, familyContext);
+        replyText = await callCloudflare(SYSTEM_PROMPT, h, fullUserPrompt);
         if (replyText) {
           lastBranch = 'CLOUDFLARE_OK';
         } else {
           // المحاولة الثالثة والنهائية: Groq اللامحدود لحمايتك من رسالة الخطأ الفني
           try {
-            replyText = await callAI(SYSTEM_PROMPT, h, familyContext);
+            replyText = await callAI(SYSTEM_PROMPT, h, fullUserPrompt);
             if (replyText) lastBranch = 'GROQ_OK';
           } catch (err) {
             lastError = err.message;
@@ -649,7 +647,7 @@ async function startBridge() {
       if (!replyText) replyText = 'أهلاً بك يا فندم، موجود كل حاجة في الورشة إن شاء الله وتشرفنا في أي وقت! كلم المهندس ماهر البدري لمتابعة طلبك.';
       lastReply = replyText.substring(0, 100);
       
-      // إرسال حالة جاري الكتابة لمدة 3 ثوانٍ
+      // إرسال حالة جاري الكتابة لمدة 3 ثوانٍ للإشعارات الفورية
       await sock.sendPresenceUpdate('composing', sendTo);
       await new Promise(r => setTimeout(r, 3000));
       await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
