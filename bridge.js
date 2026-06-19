@@ -13,7 +13,6 @@ const { exec } = require('child_process');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
 
-
 // Keep Render awake + save history every 5 minutes
 function startKeepAlive() {
   setInterval(() => {
@@ -71,6 +70,21 @@ function loadAiDisabledPhones() {
 function saveAiDisabledPhones(data) {
   fs.writeFileSync('./ai-disabled.json', JSON.stringify(data, null, 2));
 }
+
+const DEFAULT_FALLBACK_TEXT = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
+  '📍 شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
+  'قائمة الإيجار والأسعار (ريال/اليوم):\n' +
+  '1. ماكينة سن 2 بوصة ← 100 ريال\n' +
+  '2. ماكينة سن 3 بوصة ← 120 ريال\n' +
+  '3. مكنة جروف ← 80 ريال\n' +
+  '4. خواشة مواسير ← 50 ريال\n' +
+  '5. مكنة باركود HDP ← 200 ريال\n' +
+  '6. مكنة ضغط مياه (كهرباء) ← 50 ريال\n' +
+  '7. مكنة ضغط مياه (ديزل) ← 70 ريال\n' +
+  '8. مكنة HDP راس في راس ← 200 ريال\n' +
+  '9. مولد كهرباء 3 كيلو ← 100 ريال\n' +
+  '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال\n\n' +
+  'لأي استفسار أو صيانة وتصليح ماكينات، تشرفنا في الورشة أو كلم المهندس ماهر البدري.';
 
 const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق.\n\n' +
 'العنوان: شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
@@ -166,14 +180,14 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدا
 '2. إذا قال نعم أو أي تأكيد: أعطه رابط الجروب: https://chat.whatsapp.com/DL3qCnpSs6fHU5VYZgDgNL\n' +
 '3. وحذره: لا تنشر أي صور لمواد السباكة أو الحريق (حديد أو بلاستيك) لأن هذا جروب خاص بالمؤسسة فقط';
 
-async function callAI(systemPrompt, history, userMsg, retries = 2) {
+async function callAI(systemPrompt, history, userMsg) {
   const messages = [{ role: 'system', content: systemPrompt }];
   for (const msg of history) messages.push({ role: msg.role, content: msg.content });
   messages.push({ role: 'user', content: userMsg });
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error('No GROQ_API_KEY');
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30000);
+  const timer = setTimeout(() => controller.abort(), 15000);
   try {
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -182,13 +196,7 @@ async function callAI(systemPrompt, history, userMsg, retries = 2) {
       signal: controller.signal
     });
     clearTimeout(timer);
-    if (res.status === 429 && retries > 0) {
-      const wait = retries === 2 ? 30000 : 60000;
-      console.error('AI 429, retrying in ' + wait + 'ms...');
-      await new Promise(r => setTimeout(r, wait));
-      return callAI(systemPrompt, history, userMsg, retries - 1);
-    }
-    if (res.status !== 200) throw new Error('AI HTTP ' + res.status);
+    if (res.status !== 200) throw new Error('Groq HTTP ' + res.status);
     const j = await res.json();
     return j.choices?.[0]?.message?.content || '';
   } catch (e) {
@@ -200,9 +208,6 @@ async function callAI(systemPrompt, history, userMsg, retries = 2) {
 const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 let keyIndex = 0;
 
-const MISTRAL_KEYS = (process.env.MISTRAL_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
-let mistralKeyIndex = 0;
-
 const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || '';
 const CF_API_TOKEN = process.env.CF_API_TOKEN || '';
 
@@ -213,7 +218,7 @@ async function callCloudflare(systemPrompt, history, userMsg) {
   msgs.push({ role: 'user', content: userMsg });
   try {
     const c = new AbortController();
-    const t = setTimeout(() => c.abort(), 30000);
+    const t = setTimeout(() => c.abort(), 15000);
     const r = await fetch('https://api.cloudflare.com/client/v4/accounts/' + CF_ACCOUNT_ID + '/ai/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + CF_API_TOKEN, 'Content-Type': 'application/json' },
@@ -240,7 +245,7 @@ async function callAIGemini(systemPrompt, history, userMsg) {
     for (const msg of history) contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
     contents.push({ role: 'user', parts: [{ text: userMsg }] });
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
+    const timer = setTimeout(() => controller.abort(), 15000);
     try {
       const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -586,28 +591,14 @@ async function startBridge() {
       // New customer
       const hasPushName = msg.pushName && sender !== 'Unknown' && sender.trim() !== '';
       if (!hasPushName && history.length <= 1) {
-        const eqList = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
-          '📍 شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
-          'قائمة الإيجار (ريال/اليوم):\n' +
-          '1. ماكينة سن 2 بوصة ← 100 ريال\n' +
-          '2. ماكينة سن 3 بوصة ← 120 ريال\n' +
-          '3. mkenat groove ← 80 ريال\n' +
-          '4. خواشة مواسير ← 50 ريال\n' +
-          '5. مكنة باركود HDP ← 200 ريال\n' +
-          '6. مكنة ضغط مياه (كهرباء) ← 50 ريال\n' +
-          '7. مكنة ضغط مياه (ديزل) ← 70 ريال\n' +
-          '8. مكنة HDP راس في راس ← 200 ريال\n' +
-          '9. مولد كهرباء 3 كيلو ← 100 ريال\n' +
-          '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال\n\n' +
-          'للطلب أو الاستفسار: كلم المهندس ماهر البدري';
         lastBranch = 'NEW_CUSTOMER';
         
         await sock.sendPresenceUpdate('composing', sendTo);
-        await new Promise(r => setTimeout(r, 3000));
-        await sock.sendMessage(sendTo, { text: eqList }).catch(() => {});
+        await new Promise(r => setTimeout(r, 2000));
+        await sock.sendMessage(sendTo, { text: DEFAULT_FALLBACK_TEXT }).catch(() => {});
         
-        try { await sock.sendMessage(ADMIN_JID, { text: eqList }); } catch(e) {}
-        history.push({ role: 'assistant', content: eqList });
+        try { await sock.sendMessage(ADMIN_JID, { text: DEFAULT_FALLBACK_TEXT }); } catch(e) {}
+        history.push({ role: 'assistant', content: DEFAULT_FALLBACK_TEXT });
         if (history.length > MAX_HISTORY) history.shift();
         try { saveHistory(); } catch(e) {}
         continue;
@@ -635,41 +626,47 @@ async function startBridge() {
         console.error('Gemini error: ' + err.message);
       }
 
-      // المحاولة الثانية: Cloudflare (لو Gemini فشل)
+      // المحاولة الثانية: Cloudflare
       if (!replyText) {
         try {
           const h = history.slice(-10, -1);
           replyText = await callCloudflare(SYSTEM_PROMPT, h, text + familyContext);
           if (replyText) lastBranch = 'CLOUDFLARE_OK';
         } catch (err) {
+          if (!lastError) lastError = err.message;
           console.error('CF error: ' + err.message);
         }
       }
 
-      // المحاولة الثالثة: Groq (لو الموديلات اللي فوق فشلوا)
+      // المحاولة الثالثة: Groq
       if (!replyText) {
         try {
           const h = history.slice(-10, -1);
           replyText = await callAI(SYSTEM_PROMPT, h, text + familyContext);
           if (replyText) lastBranch = 'GROQ_OK';
         } catch (err) {
+          if (!lastError) lastError = err.message;
           console.error('Groq error: ' + err.message);
         }
       }
 
-      if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
+      // لو كله معطل، ابعت الفولباك فوراً
+      if (!replyText) {
+        replyText = DEFAULT_FALLBACK_TEXT;
+        lastBranch = 'FALLBACK_TRIGGERED';
+      }
+      
       lastReply = replyText.substring(0, 100);
       
-      // تشغيل إشعار جاري الكتابة الفوري والانتظار 3 ثوانٍ
       await sock.sendPresenceUpdate('composing', sendTo);
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 2000));
       await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
       
       history.push({ role: 'assistant', content: replyText });
       if (history.length > MAX_HISTORY) history.shift();
       try { saveHistory(); } catch(e) {}
       
-      if (isVoice && !family) {
+      if (isVoice && !family && replyText !== DEFAULT_FALLBACK_TEXT) {
         try {
           const t = replyText.substring(0, 200);
           const url = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(t) + '&tl=ar&client=tw-ob';
