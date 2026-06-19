@@ -624,7 +624,7 @@ async function startBridge() {
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
     try { 
-      await new Promise(r => setTimeout(r, 2000)); 
+      await new Promise(r => setTimeout(r, 5000)); 
       for (const msg of messages) {
       if (!msg.key || msg.key.fromMe) continue;
       const jid = msg.key.remoteJid;
