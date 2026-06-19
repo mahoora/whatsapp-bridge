@@ -18,14 +18,6 @@ function startKeepAlive() {
   }, 240000);
 }
 
-// تنظيف الكاش القديم المسبب للتعذر فوراً عند إعادة التشغيل
-if (fs.existsSync(AUTH_DIR)) {
-  try {
-    fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-    console.log('Cleaned old auth cache');
-  } catch(e){}
-}
-
 const DEFAULT_FALLBACK_TEXT = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
   '📍 شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
   'قائمة الإيجار والأسعار (ريال/اليوم):\n' +
@@ -41,32 +33,42 @@ const DEFAULT_FALLBACK_TEXT = 'مرحبًا بك في ورشة ماهر البد
   '10. مقص 8 بوصة لقص المواسير الحديد : 100 ريال\n\n' +
   'لأي استفسار أو صيانة وتصليح ماكينات، تشرفنا في الورشة أو كلم المهندس ماهر البدري.';
 
-const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق في مكة. رد بالعامية المصرية وبشكل مختصر ومفيد جداً. نادِ العميل باسمه أول الرد.';
+const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق في مكة. رد بالعامية المصرية وبشكل مختصر ومفيد جداً. نادِ العميل باسمه أول الرد إن أمكن.';
 
 const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 let keyIndex = 0;
 
-async function callAIGemini(history, userMsg) {
+async function callAIGemini(userMsg) {
   if (GEMINI_KEYS.length === 0) return null;
+  
+  // دمج البرومبت مع رسالة المستخدم في نص واحد لضمان استجابة جيميناي بدون أخطاء تشكيل الهيكل
+  const fullPrompt = `${SYSTEM_PROMPT}\n\nرسالة العميل الحالية: ${userMsg}\n\nالرد بالعامية المصرية باختصار:`;
+  
   for (let i = 0; i < GEMINI_KEYS.length; i++) {
     const idx = (keyIndex + i) % GEMINI_KEYS.length;
     const apiKey = GEMINI_KEYS[idx];
-    const contents = [];
-    for (const msg of history) contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
-    contents.push({ role: 'user', parts: [{ text: userMsg }] });
+    
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
+    
     try {
       const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 512 } }),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: fullPrompt }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 300 }
+        }),
         signal: controller.signal
       });
+      
       clearTimeout(timer);
       if (res.status === 200) {
         keyIndex = (idx + 1) % GEMINI_KEYS.length;
         const j = await res.json();
-        return j.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        return j.candidates?.[0]?.content?.parts?.[0]?.text || null;
+      } else {
+        console.error('Gemini Key Error, status:', res.status);
       }
     } catch (e) {
       clearTimeout(timer);
@@ -81,7 +83,7 @@ let wsConnected = false;
 
 app.get('/status', (req, res) => res.json({ connected: wsConnected }));
 app.get('/qr', async (req, res) => {
-  if (!latestQr) return res.send('<h1>الباركود الجديد بيفتح.. انتظر ثواني وحدث الصفحة</h1>');
+  if (!latestQr) return res.send('<h1>البوت متصل بالفعل وجاهز للعمل!</h1>');
   res.setHeader('Content-Type', 'image/png');
   res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
 });
@@ -95,10 +97,8 @@ async function startBridge() {
   const sock = makeWASocket({
     auth: state,
     logger: pino({ level: 'silent' }),
-    browser: ['Ubuntu', 'Chrome', '110.0.0.0'], // تعريف رسمي نظيف ومقبول فوراً
-    connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 0,
-    keepAliveIntervalMs: 10000
+    browser: ['Ubuntu', 'Chrome', '110.0.0.0'],
+    connectTimeoutMs: 60000
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -108,7 +108,7 @@ async function startBridge() {
     if (connection === 'open') {
       wsConnected = true;
       latestQr = null;
-      console.log('✅ تم الاتصال!');
+      console.log('✅ تم الاتصال والتشغيل!');
     }
     if (connection === 'close') {
       wsConnected = false;
@@ -126,11 +126,16 @@ async function startBridge() {
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         if (!text) continue;
 
-        let replyText = await callAIGemini([], text);
-        if (!replyText) replyText = DEFAULT_FALLBACK_TEXT;
+        // استدعاء جيميناي بالتركيبة الجديدة المستقرة
+        let replyText = await callAIGemini(text);
+        
+        // إذا فشل جيميناي أو المفاتيح فيها مشكلة، يرجع للموحدة تلقائياً
+        if (!replyText) {
+          replyText = DEFAULT_FALLBACK_TEXT;
+        }
 
         await sock.sendPresenceUpdate('composing', jid);
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 1200));
         await sock.sendMessage(jid, { text: replyText }).catch(() => {});
       } 
     } catch(e) {}
