@@ -1,15 +1,13 @@
 require('dotenv').config();
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
 const QRCode = require('qrcode');
 const https = require('https');
-const fs = require('fs');
-const path = require('path');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
-const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 10000;
-const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
+const BRIDGE_PORT = process.env.PORT || 10000;
+const AUTH_DIR = './auth_info';
 let latestQr = null;
 
 function startKeepAlive() {
@@ -18,48 +16,42 @@ function startKeepAlive() {
   }, 240000);
 }
 
-const DEFAULT_FALLBACK_TEXT = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
-  '📍 شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
-  'قائمة الإيجار والأسعار (ريال/اليوم):\n' +
-  '1. ماكينة سن 2 بوصة : 100 ريال\n' +
-  '2. ماكينة سن 3 بوصة : 120 ريال\n' +
-  '3. مكنة جروف : 80 ريال\n' +
-  '4. خواشة مواسير : 50 ريال\n' +
-  '5. مكنة باركود HDP : 200 ريال\n' +
-  '6. مكنة ضغط مياه (كهرباء) : 50 ريال\n' +
-  '7. مكنة ضغط مياه (ديزل) : 70 ريال\n' +
-  '8. مكنة HDP راس في راس : 200 ريال\n' +
-  '9. مولد كهرباء 3 كيلو : 100 ريال\n' +
-  '10. مقص 8 بوصة لقص المواسير الحديد : 100 ريال\n\n' +
-  'لأي استفسار أو صيانة وتصليح ماكينات، تشرفنا في الورشة أو كلم المهندس ماهر البدري.';
+// محرك الرد الذكي المحلي المباشر لتفادي أخطاء السيرفرات الخارجية
+function getLocalAIResponse(userMsg) {
+  const msg = userMsg.toLowerCase().trim();
+  
+  const prices = '🔧 *أسعار الإيجار اليومي في ورشة ماهر البدري*:\n' +
+    '1. ماكينة سن 2 بوصة : 100 ريال\n' +
+    '2. ماكينة سن 3 بوصة : 120 ريال\n' +
+    '3. مكنة جروف : 80 ريال\n' +
+    '4. خواشة مواسير : 50 ريال\n' +
+    '5. مكنة باركود HDP : 200 ريال\n' +
+    '6. مكنة ضغط مياه (كهرباء) : 50 ريال\n' +
+    '7. مكنة ضغط مياه (ديزل) : 70 ريال\n' +
+    '8. مكنة HDP راس في راس : 200 ريال\n' +
+    '9. مولد كهرباء 3 كيلو : 100 ريال\n' +
+    '10. مقص 8 بوصة لقص المواسير الحديد : 100 ريال';
 
-const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق في مكة. رد بالعامية المصرية وبشكل مختصر ومفيد جداً. نادِ العميل باسمه أول الرد.';
+  const location = '📍 *مكان الورشة*:\nشارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات.';
 
-// البديل المستقر والمجاني والسريع تماماً لتفادي مشاكل جيميناي وقفل الحسابات
-const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || '825fa7e8d2e30bba9b5e52da5c3bb95a';
-const CF_API_TOKEN = process.env.CF_API_TOKEN || 'v76lEul9q6T64_K0_PkaGkZ33gM8L6_iM6f89z5t';
+  if (msg.includes('سعر') || msg.includes('كام') || msg.includes('تأجير') || msg.includes('ايجار') || msg.includes('بكم')) {
+    return `يا غالي منورني! معاك المهندس ماهر البدري. اتفضل دي قائمة الأسعار المظبوطة للإيجار اليومي:\n\n${prices}\n\nتبي تحجز أي ماكينة منهم؟`;
+  }
+  
+  if (msg.includes('عنوان') || msg.includes('فين') || msg.includes('مكان') || msg.includes('موقع') || msg.includes('لوكيشن')) {
+    return `تشرفنا وتطلبنا في أي وقت يا هندسة، عنوان ورشتنا:\n\n${location}\n\nتنورنا في الورشة بأي وقت لصيانة وتصليح المعدات.`;
+  }
 
-async function callCloudflare(userMsg) {
-  const msgs = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user', content: userMsg }
-  ];
-  try {
-    const c = new AbortController();
-    const t = setTimeout(() => c.abort(), 8000);
-    const r = await fetch('https://api.cloudflare.com/client/v4/accounts/' + CF_ACCOUNT_ID + '/ai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + CF_API_TOKEN, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', messages: msgs, temperature: 0.7, max_tokens: 300 }),
-      signal: c.signal
-    });
-    clearTimeout(t);
-    if (r.status === 200) {
-      const j = await r.json();
-      return j.choices?.[0]?.message?.content || null;
-    }
-  } catch (e) {}
-  return null;
+  if (msg.includes('سلام') || msg.includes('مرحب') || msg.includes('أهلاً') || msg.includes('الو') || msg.includes('يا ماهر')) {
+    return `وعليكم السلام ورحمة الله وبركاته! مرحب بيك في ورشة ماهر البدري لمعدات السلامة من الحريق بمكة. أمرني يا غالي، محتاج صيانة ماكينات ولا إيجار؟`;
+  }
+
+  if (msg.includes('شكرا') || msg.includes('تسلم') || msg.includes('يعطيك')) {
+    return `العفو يا غالي في الخدمة دايماً! تشرفنا في ورشة ماهر البدري بشارع الحج في أي وقت.`;
+  }
+
+  // الرد الذكي العام بالعامية
+  return `يا مرحب بيك يا غالي مع ورشة ماهر البدري لمعدات الحريق بمكة. سامعك كويس، اتفضل قولي إيه طلبك بالظبط بخصوص الصيانة أو الإيجار عشان أخدمك فوراً؟\n\n📍 للعنوان اسأل عن "المكان"\n💰 للأسعار اسأل عن "الأسعار"`;
 }
 
 const app = express();
@@ -68,7 +60,7 @@ let wsConnected = false;
 
 app.get('/status', (req, res) => res.json({ connected: wsConnected }));
 app.get('/qr', async (req, res) => {
-  if (!latestQr) return res.send('<h1>البوت متصل شغال أو الجلسة جاري تحميلها.. انتظر ثواني</h1>');
+  if (!latestQr) return res.send('<h1>البوت متصل شغال بالفعل وجاهز للرد!</h1>');
   res.setHeader('Content-Type', 'image/png');
   res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
 });
@@ -82,7 +74,7 @@ async function startBridge() {
   const sock = makeWASocket({
     auth: state,
     logger: pino({ level: 'silent' }),
-    browser: ['Ubuntu', 'Chrome', '110.0.0.0'] // متصفح ثابت ومستقر يمنع طلب الباركود المتكرر
+    browser: ['Ubuntu', 'Chrome', '110.0.0.0']
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -92,7 +84,7 @@ async function startBridge() {
     if (connection === 'open') {
       wsConnected = true;
       latestQr = null;
-      console.log('✅ تم الاتصال والتشغيل الثابت!');
+      console.log('✅ Connected Locally!');
     }
     if (connection === 'close') {
       wsConnected = false;
@@ -110,16 +102,11 @@ async function startBridge() {
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         if (!text) continue;
 
-        // الرد الذكي الفوري من سيرفر كلوود فلير المضمون
-        let replyText = await callCloudflare(text);
-        
-        // لو السيرفر الخارجي علق تماماً يرجع للموحدة كأمان
-        if (!replyText) {
-          replyText = DEFAULT_FALLBACK_TEXT;
-        }
+        // توليد الرد الذكي فوراً بدون انتظار سيرفر خارجي
+        let replyText = getLocalAIResponse(text);
 
         await sock.sendPresenceUpdate('composing', jid);
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 800));
         await sock.sendMessage(jid, { text: replyText }).catch(() => {});
       } 
     } catch(e) {}
