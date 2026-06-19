@@ -345,7 +345,6 @@ function loadHistory() {
     const data = JSON.parse(fs.readFileSync(HISTORY_FILE));
     return new Map(Object.entries(data));
   } catch (e) {
-    // Try loading from env var as fallback
     try {
       const envData = process.env.HISTORY_JSON;
       if (envData) return new Map(Object.entries(JSON.parse(Buffer.from(envData, 'base64').toString())));
@@ -623,8 +622,6 @@ async function startBridge() {
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
     try { 
-      // تسريع زمن استلام الرسالة في السيرفر ليكون فوري
-      await new Promise(r => setTimeout(r, 100)); 
       for (const msg of messages) {
       if (!msg.key || msg.key.fromMe) continue;
       const jid = msg.key.remoteJid;
@@ -761,7 +758,12 @@ async function startBridge() {
         lastBranch = 'NEW_CUSTOMER';
         pushNameVal = msg.pushName || '(none)';
         lastReply = 'NEW CUSTOMER: sent equipment list';
+        
+        // تطبيق التأخير المظبوط للعملاء الجدد مع الـ composing
+        await sock.sendPresenceUpdate('composing', sendTo);
+        await new Promise(r => setTimeout(r, 3000));
         await sock.sendMessage(sendTo, { text: eqList }).catch(() => {});
+        
         try { await sock.sendMessage(ADMIN_JID, { text: eqList }); } catch(e) {}
         history.push({ role: 'assistant', content: eqList });
         if (history.length > MAX_HISTORY) history.shift();
@@ -774,7 +776,6 @@ async function startBridge() {
       if (family) {
         familyContext = ' [هذا من العائلة: ' + family.relationship + ' (' + family.name + '). رد طبيعي بدون تعريف بنفسك، ' + family.style + ']';
       } else {
-        // Pass customer name to AI so it addresses them by name
         familyContext = ' [اسم العميل: ' + sender + '. ناديه باسمه في الرد وقل "مرحبا ' + sender + '"]';
       }
 
@@ -783,48 +784,48 @@ async function startBridge() {
       let replyText = '';
       lastError = '';
       const h = history.slice(-10, -1);
-      // Gemini first (5 key rotation)
+      
+      // جلب رد الذكاء
       replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
       if (replyText) {
         lastBranch = 'GEMINI_OK';
       } else {
-        // Try Cloudflare Workers AI
         replyText = await callCloudflare(SYSTEM_PROMPT, h, familyContext + '\n' + text);
         if (replyText) {
           lastBranch = 'CLOUDFLARE_OK';
         } else {
-        // Try Groq once
-        try {
-          const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
-          for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
-          msgs.push({ role: 'user', content: familyContext + '\n' + text });
-          const c2 = new AbortController();
-          const t2 = setTimeout(() => c2.abort(), 30000);
-          const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
-            signal: c2.signal
-          });
-          clearTimeout(t2);
-          if (r2.status === 200) {
-            const j2 = await r2.json();
-            replyText = j2.choices?.[0]?.message?.content || '';
-            lastBranch = 'GROQ_OK';
-          } else {
-            lastError = 'GROQ HTTP ' + r2.status;
+          try {
+            const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
+            for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
+            msgs.push({ role: 'user', content: familyContext + '\n' + text });
+            const c2 = new AbortController();
+            const t2 = setTimeout(() => c2.abort(), 30000);
+            const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
+              signal: c2.signal
+            });
+            clearTimeout(t2);
+            if (r2.status === 200) {
+              const j2 = await r2.json();
+              replyText = j2.choices?.[0]?.message?.content || '';
+              lastBranch = 'GROQ_OK';
+            } else {
+              lastError = 'GROQ HTTP ' + r2.status;
+            }
+          } catch (err) {
+            if (!lastError) lastError = err.message;
           }
-        } catch (err) {
-          if (!lastError) lastError = err.message;
-          console.error('Groq error: ' + err.message);
         }
-      }
       }
 
       if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
       lastReply = replyText.substring(0, 100);
       
-      // التعديل السحري النهائي: إرسال فوري ومباشر دون تأخير أو composing لمنع كتم الصوت
+      // التعديل السحري للتأخير والإشعارات: تفعيل الـ composing لمدة 3 ثوانٍ فقط، ثم الإرسال الفوري لضمان جرس الإشعار
+      await sock.sendPresenceUpdate('composing', sendTo);
+      await new Promise(r => setTimeout(r, 3000));
       await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
       
       history.push({ role: 'assistant', content: replyText });
