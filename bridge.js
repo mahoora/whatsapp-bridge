@@ -2,40 +2,62 @@ require('dotenv').config();
 const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const express = require('express');
 const qrcode = require('qrcode');
-const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-let currentSock = null;
 let latestQr = null;
 let isConnected = false;
 
-app.get('/', (req, res) => {
-    res.send(`<h1>حالة البوت: ${isConnected ? '✅ متصل' : '❌ غير متصل'}</h1>
-              <a href="/status">حالة الاتصال</a> | <a href="/qr">عرض الباركود</a>`);
-});
-
-app.get('/status', (req, res) => {
-    res.json({ connected: isConnected, user: currentSock?.user?.id || null });
-});
+// --- وظيفة الذكاء الاصطناعي ---
+async function getAIReply(text) {
+    try {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [{ role: 'system', content: 'أنت ماهر البدري، صاحب ورشة معدات حريق. رد بالعامية المصرية.' }, { role: 'user', content: text }],
+                temperature: 0.7
+            })
+        });
+        const data = await response.json();
+        return data.choices[0].message.content;
+    } catch (e) { return "الورشة مشغولة حالياً، كلمني خاص."; }
+}
 
 app.get('/qr', async (req, res) => {
     if (!latestQr) return res.send('جاري التحضير.. انتظر لحظات');
-    const qrBuffer = await qrcode.toBuffer(latestQr);
-    res.type('png').send(qrBuffer);
+    res.type('png').send(await qrcode.toBuffer(latestQr));
 });
 
-app.listen(PORT, () => console.log('Server running on port ' + PORT));
+app.listen(PORT);
 
 async function startBridge() {
-    const { state, saveCreds } = await useMultiFileAuthState('./auth_info');
-    const sock = makeWASocket({ auth: state });
-    currentSock = sock;
+    const authPath = process.env.AUTH_DIR || './auth_info';
+    const { state, saveCreds } = await useMultiFileAuthState(authPath);
+    
+    // الحل الجذري للخطأ 515 بتغيير تعريف المتصفح
+    const sock = makeWASocket({ 
+        auth: state, 
+        printQRInTerminal: true, 
+        browser: ['Chrome', 'Windows', '10.0'] 
+    });
 
     sock.ev.on('creds.update', saveCreds);
     sock.ev.on('connection.update', ({ connection, qr }) => {
         if (qr) latestQr = qr;
         isConnected = (connection === 'open');
+        if (isConnected) console.log('تم الاتصال بنجاح!');
+    });
+
+    sock.ev.on('messages.upsert', async ({ messages }) => {
+        const msg = messages[0];
+        if (!msg.message || msg.key.fromMe) return;
+        const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
+        if (text) {
+            const reply = await getAIReply(text);
+            await sock.sendMessage(msg.key.remoteJid, { text: reply });
+        }
     });
 }
 startBridge();
