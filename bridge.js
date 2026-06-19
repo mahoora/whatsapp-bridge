@@ -4,6 +4,8 @@ const express = require('express');
 const pino = require('pino');
 const QRCode = require('qrcode');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
 const BRIDGE_PORT = process.env.PORT || 10000;
@@ -16,9 +18,18 @@ function startKeepAlive() {
   }, 240000);
 }
 
-// محرك الرد الذكي المحلي المباشر لتفادي أخطاء السيرفرات الخارجية
+// قراءة الجلسة المحفوظة من اللوحة لو موجودة عشان ما يطلبش باركود تاني
+if (process.env.CREDS_JSON && !fs.existsSync(path.join(AUTH_DIR, 'creds.json'))) {
+  if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+  try {
+    fs.writeFileSync(path.join(AUTH_DIR, 'creds.json'), Buffer.from(process.env.CREDS_JSON, 'base64'));
+    console.log('✅ تم استعادة الجلسة بنجاح من اللوحة!');
+  } catch (e) { console.error('خطأ في قراءة كاش اللوحة:', e); }
+}
+
 function getLocalAIResponse(userMsg) {
-  const msg = userMsg.toLowerCase().trim();
+  // تحويل النص لسمول وتنظيف المسافات والرموز عشان يلقط أي كلمة
+  const msg = userMsg.toLowerCase().trim().replace(/[؟\?\.،,]/g, '');
   
   const prices = '🔧 *أسعار الإيجار اليومي في ورشة ماهر البدري*:\n' +
     '1. ماكينة سن 2 بوصة : 100 ريال\n' +
@@ -34,24 +45,25 @@ function getLocalAIResponse(userMsg) {
 
   const location = '📍 *مكان الورشة*:\nشارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات.';
 
-  if (msg.includes('سعر') || msg.includes('كام') || msg.includes('تأجير') || msg.includes('ايجار') || msg.includes('بكم')) {
-    return `يا غالي منورني! معاك المهندس ماهر البدري. اتفضل دي قائمة الأسعار المظبوطة للإيجار اليومي:\n\n${prices}\n\nتبي تحجز أي ماكينة منهم؟`;
+  // فحص مرن جداً للكلمات المفتاحية
+  if (/سعر|كام|بكام|قائمه|قائمة|ايجار|إيجار|تأجير|تاخير|فلوس|ريال|بكم/.test(msg)) {
+    return `يا غالي منورني! معاك المهندس ماهر البدري. اتفضل دي قائمة الأسعار المظبوطة للإيجار اليومي:\n\n${prices}\n\nحابب تحجز أو تستفسر عن ماكينة معينة؟`;
   }
   
-  if (msg.includes('عنوان') || msg.includes('فين') || msg.includes('مكان') || msg.includes('موقع') || msg.includes('لوكيشن')) {
-    return `تشرفنا وتطلبنا في أي وقت يا هندسة، عنوان ورشتنا:\n\n${location}\n\nتنورنا في الورشة بأي وقت لصيانة وتصليح المعدات.`;
+  if (/عنوان|فين|مكان|موقع|لوكيشن|وين|الورشة|الورشه|طريق|وصف/.test(msg)) {
+    return `تشرفنا وتنورنا في أي وقت يا هندسة، عنوان ورشتنا:\n\n${location}\n\nمفتوحين وجاهزين لصيانة وتصليح جميع المعدات.`;
   }
 
-  if (msg.includes('سلام') || msg.includes('مرحب') || msg.includes('أهلاً') || msg.includes('الو') || msg.includes('يا ماهر')) {
-    return `وعليكم السلام ورحمة الله وبركاته! مرحب بيك في ورشة ماهر البدري لمعدات السلامة من الحريق بمكة. أمرني يا غالي، محتاج صيانة ماكينات ولا إيجار؟`;
+  if (/سلام|مرحب|اهلان|اهلا|الو|يا ماهر|صباح|مساء|خير|هلا/.test(msg)) {
+    return `وعليكم السلام ورحمة الله وبركاته! مرحب بيك في ورشة ماهر البدري لمعدات السلامة من الحريق بمكة. أمرني يا غالي، محتاج صيانة ماكينات ولا إيجار ومعدات؟`;
   }
 
-  if (msg.includes('شكرا') || msg.includes('تسلم') || msg.includes('يعطيك')) {
-    return `العفو يا غالي في الخدمة دايماً! تشرفنا في ورشة ماهر البدري بشارع الحج في أي وقت.`;
+  if (/شكرا|تسلم|مشكور|يعطيك|جزاك/.test(msg)) {
+    return `العفو يا غالي في الخدمة دايماً! تشرفنا وتنورنا في ورشة ماهر البدري بشارع الحج في أي وقت.`;
   }
 
-  // الرد الذكي العام بالعامية
-  return `يا مرحب بيك يا غالي مع ورشة ماهر البدري لمعدات الحريق بمكة. سامعك كويس، اتفضل قولي إيه طلبك بالظبط بخصوص الصيانة أو الإيجار عشان أخدمك فوراً؟\n\n📍 للعنوان اسأل عن "المكان"\n💰 للأسعار اسأل عن "الأسعار"`;
+  // الرد الترحيبي الذكي (لو كتب أي كلام تاني بره التصنيفات)
+  return `يا مرحب بيك يا غالي مع ورشة ماهر البدري لمعدات الحريق بمكة. أنا سامعك كويس، اتفضل قولي إيه طلبك بالظبط بخصوص الصيانة أو الإيجار عشان أخدمك فوراً؟\n\n📍 للعنوان اكتب "المكان" أو "العنوان"\n💰 للأسعار اكتب "الأسعار" أو "الإيجار"`;
 }
 
 const app = express();
@@ -84,7 +96,14 @@ async function startBridge() {
     if (connection === 'open') {
       wsConnected = true;
       latestQr = null;
-      console.log('✅ Connected Locally!');
+      console.log('✅ Connected Easily!');
+      
+      // حفظ الجلسة بصيغة Base64 تلقائياً في السيرفر عشان ما تروحش تاني
+      try {
+        const credsRaw = fs.readFileSync(path.join(AUTH_DIR, 'creds.json'));
+        console.log('--- انسخ النص اللي تحت ده وحطه في متغير CREDS_JSON باللوحة لو عاوز تثبته تماماً ---');
+        console.log(credsRaw.toString('base64'));
+      } catch(e){}
     }
     if (connection === 'close') {
       wsConnected = false;
@@ -102,11 +121,10 @@ async function startBridge() {
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         if (!text) continue;
 
-        // توليد الرد الذكي فوراً بدون انتظار سيرفر خارجي
         let replyText = getLocalAIResponse(text);
 
         await sock.sendPresenceUpdate('composing', jid);
-        await new Promise(r => setTimeout(r, 800));
+        await new Promise(r => setTimeout(r, 600));
         await sock.sendMessage(jid, { text: replyText }).catch(() => {});
       } 
     } catch(e) {}
