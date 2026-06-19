@@ -13,6 +13,7 @@ const { exec } = require('child_process');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
 
+// Keep Render awake + save history every 5 minutes
 function startKeepAlive() {
   setInterval(() => {
     https.get(RENDER_URL + '/status', res => { res.resume(); }).on('error', () => {});
@@ -29,6 +30,7 @@ function loadCreds() {
   if (!v) return;
   if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
   fs.writeFileSync(path.join(AUTH_DIR, 'creds.json'), Buffer.from(v, 'base64'));
+  console.log('Loaded creds from env');
 }
 
 function renderUpdateEnv(keyName, value) {
@@ -71,7 +73,8 @@ function saveAiDisabledPhones(data) {
 
 const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق.\n\n' +
 'العنوان: شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
-'** قائمة المنتجات للإيجار مع الأسعار (ريال/اليوم):\n' +
+'** مهم جدا: استخدم قائمة المنتجات التالية عند الرد **\n\n' +
+'قائمة المنتجات للإيجار مع الأسعار (ريال/اليوم):\n' +
 '1. ماكينة سن 2 بوصة ← 100 ريال/اليوم\n' +
 '2. ماكينة سن 3 بوصة ← 120 ريال/اليوم\n' +
 '3. مكنة جروف ← 80 ريال/اليوم\n' +
@@ -83,135 +86,12 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدا
 '9. مولد كهرباء 3 كيلو ← 100 ريال/اليوم\n' +
 '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال/اليوم\n\n' +
 '** تعليمات الرد **\n' +
-'- رد بالعامية المصرية فقط وممنوع الفصحى.\n' +
-'- نادِ العميل باسمه في أول الرد.\n' +
-'- ردودك قصيرة جداً ومباشرة على قد السؤال.';
-
-async function callAI(systemPrompt, history, userMsg, retries = 2) {
-  const messages = [{ role: 'system', content: systemPrompt }];
-  for (const msg of history) messages.push({ role: msg.role, content: msg.content });
-  messages.push({ role: 'user', content: userMsg });
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages, temperature: 0.7, max_tokens: 1024 })
-    });
-    if (res.status !== 200) return null;
-    const j = await res.json();
-    return j.choices?.[0]?.message?.content || null;
-  } catch (e) { return null; }
-}
-
-const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
-let keyIndex = 0;
-
-async function callAIGemini(systemPrompt, history, userMsg) {
-  if (GEMINI_KEYS.length === 0) return null;
-  for (let i = 0; i < GEMINI_KEYS.length; i++) {
-    const idx = (keyIndex + i) % GEMINI_KEYS.length;
-    const apiKey = GEMINI_KEYS[idx];
-    const contents = [];
-    for (const msg of history) contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
-    contents.push({ role: 'user', parts: [{ text: userMsg }] });
-    try {
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } })
-      });
-      if (res.status === 200) {
-        keyIndex = (idx + 1) % GEMINI_KEYS.length;
-        const j = await res.json();
-        return j.candidates?.[0]?.content?.parts?.[0]?.text || null;
-      }
-    } catch (e) {}
-  }
-  return null;
-}
-
-const HISTORY_FILE = './conversation-history.json';
-const MAX_HISTORY = 30;
-let conversationHistory = loadHistory();
-let familyContacts = loadFamilyContacts();
-let aiDisabledPhones = loadAiDisabledPhones();
-let aiMode = 'ai';
-
-function loadHistory() {
-  try { return new Map(Object.entries(JSON.parse(fs.readFileSync(HISTORY_FILE)))); }
-  catch (e) { return new Map(); }
-}
-function saveHistory() {
-  const obj = {};
-  for (const [key, val] of conversationHistory) obj[key] = val;
-  fs.writeFileSync(HISTORY_FILE, JSON.stringify(obj));
-}
-
-const app = express();
-app.use(express.json());
-let currentSock = null;
-let wsConnected = false;
-let latestQr = null;
-
-async function startBridge() {
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const sock = makeWASocket({ auth: state, logger: pino({ level: 'silent' }), browser: ['Chrome', 'Chrome', '120.0'] });
-  currentSock = sock;
-
-  sock.ev.on('creds.update', () => { saveCreds(); saveCredsToEnv(); });
-  sock.ev.on('connection.update', ({ connection, qr }) => {
-    if (qr) latestQr = qr;
-    if (connection === 'open') wsConnected = true;
-    if (connection === 'close') { wsConnected = false; setTimeout(startBridge, 10000); }
-  });
-
-  sock.ev.on('messages.upsert', async ({ messages }) => {
-    try {
-      // سرعة استجابة فائقة فورية لخروج الصوت بدون كتم السيرفر
-      await new Promise(r => setTimeout(r, 100));
-      for (const msg of messages) {
-        if (!msg.key || msg.key.fromMe) continue;
-        const jid = msg.key.remoteJid;
-        if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
-
-        let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-        if (!text) continue;
-
-        if (!conversationHistory.has(jid)) conversationHistory.set(jid, []);
-        const history = conversationHistory.get(jid);
-        history.push({ role: 'user', content: text });
-
-        const tlow = text.trim();
-        if (tlow === 'يدوي') { aiMode = 'manual'; await sock.sendMessage(jid, { text: '✅ تم التحويل للرد اليدوي.' }); continue; }
-        if (tlow === 'تلقائي') { aiMode = 'ai'; await sock.sendMessage(jid, { text: '✅ تم تشغيل رد الذكاء.' }); continue; }
-        if (aiMode === 'manual') continue;
-
-        // طلب الرد من الذكاء الاصطناعي
-        let replyText = await callAIGemini(SYSTEM_PROMPT, history.slice(-5), text);
-        if (!replyText) replyText = await callAI(SYSTEM_PROMPT, history.slice(-5), text);
-
-        // الاحتياطي الذكي: لو مفاتيح الذكاء معطلة، ابعث الأسعار فوراً بدل رسالة العطل الفني
-        if (!replyText) {
-          replyText = `مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق 🔥\n` +
-                      `📍 مكة المكرمة - شارع الحج\n\n` +
-                      `أسعار الإيجار اليومي الحالي:\n` +
-                      `1. ماكينة سن 2 بوصة ← 100 ريال\n` +
-                      `2. ماكينة سن 3 بوصة ← 120 ريال\n` +
-                      `3. مكنة جروف ← 80 ريال\n` +
-                      `4. خواشة مواسير ← 50 ريال\n` +
-                      `5. مكنة ضغط مياه ← 50 ريال\n\n` +
-                      `لأي استفسار آخر أو صيانة، المهندس ماهر هيرد عليك بنفسه حالاً!`;
-        }
-
-        // إرسال مباشر وفوري بدون أي تأخير لضمان تفعيل صوت الإشعار في الجوال
-        await sock.sendMessage(jid, { text: replyText }).catch(() => {});
-        history.push({ role: 'assistant', content: replyText });
-        saveHistory();
-      }
-    } catch(e) {}
-  });
-}
-
-app.get('/status', (req, res) => res.json({ connected: wsConnected }));
-app.listen(BRIDGE_PORT, () => { startKeepAlive(); startBridge().catch(console.error); });
+'- عندك معرفة عامة وشاملة في كل المجالات: دين، تاريخ، سياسة، علوم، رياضة، ثقافة، تكنولوجيا، طبخ، صحة، أي حاجة. تقدر ترد على أي سؤال من أي مجال.\n' +
+'- لو حد سلم عليك (السلام عليكم، هلا، مرحبا): رد التحية بأحسن منها وقل "وعليكم السلام ورحمة الله وبركاته" وبعدين رحب بالعميل وقلبه تحت أمرك.\n' +
+'- للعائلة: رد بنفس لهجة اللي كلمك\n' +
+'- العربية الفصحى ممنوع. رد بالعامية فقط\n' +
+'- **العملاء (غير العائلة): ناديهم باسمهم اللي جايزلك (مثلاً "مرحبا أحمد"). استخدم اسم العميل في أول رد.**\n' +
+'- **العملاء (غير العائلة): رد باللهجة المصرية فقط - استخدم الكلمات المصرية دي**\n' +
+'قاموس اللهجة المصرية (استخدمها بدل الفصحى):\n' +
+'- "إيه" بدل "ماذا"\n' +
+'- "عايز/عايزة" بدل "أريد"\n'
