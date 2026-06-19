@@ -828,8 +828,8 @@ async function startBridge() {
       if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
       lastReply = replyText.substring(0, 100);
      await sock.sendPresenceUpdate('composing', sendTo);
-await new Promise(r => setTimeout(r, 9000));
-await sock.readMessages([msg.key]).catch(() => {});
+await new Promise(r => setTimeout(r, 4000));
+// await sock.readMessages([msg.key]).catch(() => {});
 await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
       history.push({ role: 'assistant', content: replyText });
       if (history.length > MAX_HISTORY) history.shift();
