@@ -12,12 +12,22 @@ const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
 let latestQr = null;
 
-// الحفاظ على السيرفر مستيقظاً
 function startKeepAlive() {
   setInterval(() => {
     https.get(RENDER_URL + '/status', res => { res.resume(); }).on('error', () => {});
   }, 240000);
 }
+
+// دالة هامة لقرأة الجلسة القديمة من الـ Env ومنع تعذر الاتصال
+function loadCreds() {
+  const v = process.env.CREDS_JSON;
+  if (!v) return;
+  if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+  fs.writeFileSync(path.join(AUTH_DIR, 'creds.json'), Buffer.from(v, 'base64'));
+  console.log('Loaded creds from env');
+}
+
+loadCreds();
 
 const DEFAULT_FALLBACK_TEXT = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
   '📍 شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
@@ -25,7 +35,6 @@ const DEFAULT_FALLBACK_TEXT = 'مرحبًا بك في ورشة ماهر البد
 
 const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق في مكة. رد بالعامية المصرية وبشكل مختصر ومفيد جداً. نادِ العميل باسمه.';
 
-// البديل الأول الذكي والمجاني (Cloudflare) عشان نتخطى حجب Groq
 const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || '825fa7e8d2e30bba9b5e52da5c3bb95a';
 const CF_API_TOKEN = process.env.CF_API_TOKEN || 'v76lEul9q6T64_K0_PkaGkZ33gM8L6_iM6f89z5t';
 
@@ -57,7 +66,7 @@ let wsConnected = false;
 
 app.get('/status', (req, res) => res.json({ connected: wsConnected }));
 app.get('/qr', async (req, res) => {
-  if (!latestQr) return res.status(404).send('No QR');
+  if (!latestQr) return res.status(404).send('No QR Available or Already Connected');
   res.setHeader('Content-Type', 'image/png');
   res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
 });
@@ -66,7 +75,6 @@ app.get('/', (req, res) => res.send(`<h1>🔧 البوت يعمل والبديل
 async function startBridge() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const sock = makeWASocket({
-    printQRInTerminal: true,
     auth: state,
     logger: pino({ level: 'silent' }),
     browser: ['Chrome', 'Chrome', '120.0'],
@@ -75,7 +83,10 @@ async function startBridge() {
   sock.ev.on('creds.update', saveCreds);
   sock.ev.on('connection.update', ({ connection, qr }) => {
     if (qr) latestQr = qr;
-    if (connection === 'open') wsConnected = true;
+    if (connection === 'open') {
+      wsConnected = true;
+      latestQr = null; // مسح الباركود بعد الاتصال الناجح
+    }
     if (connection === 'close') {
       wsConnected = false;
       setTimeout(startBridge, 10000);
@@ -92,10 +103,8 @@ async function startBridge() {
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         if (!text) continue;
 
-        // تشغيل البديل فوراً لتفادي 429 الخاص بـ Groq
         let replyText = await callCloudflare([], text);
 
-        // إذا فشل البديل أيضاً، نستخدم الرسالة الاحتياطية الثابتة
         if (!replyText) {
           replyText = DEFAULT_FALLBACK_TEXT;
         }
