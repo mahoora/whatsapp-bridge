@@ -624,7 +624,7 @@ async function startBridge() {
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
     try { 
-      await new Promise(r => setTimeout(r, 10000)); 
+      await new Promise(r => setTimeout(r, 3000)); 
       for (const msg of messages) {
       if (!msg.key || msg.key.fromMe) continue;
       const jid = msg.key.remoteJid;
@@ -717,11 +717,11 @@ async function startBridge() {
             saveAiDisabledPhones(aiDisabledPhones);
           }
           await sock.sendPresenceUpdate('composing', sendTo);
-          await new Promise(r => setTimeout(r, 9000));
+          await new Promise(r => setTimeout(r, 3000));
           await sock.sendMessage(sendTo, { text: '✅ تم إيقاف الزكاء عن الرقم ' + num + '. أنت هترد عليه.' });
         } else {
           await sock.sendPresenceUpdate('composing', sendTo);
-          await new Promise(r => setTimeout(r, 9000));
+          await new Promise(r => setTimeout(r, 3000));
           await sock.sendMessage(sendTo, { text: 'أكتب الرقم كامل، مثال:\nالغاء 201093122475' });
         }
         lastReply = 'DISABLE: ' + num;
