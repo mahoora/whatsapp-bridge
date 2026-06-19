@@ -8,7 +8,22 @@ const PORT = process.env.PORT || 3000;
 let latestQr = null;
 let isConnected = false;
 
-// --- وظيفة الذكاء الاصطناعي ---
+// الصفحة الرئيسية لمنع ظهور Cannot GET /
+app.get('/', (req, res) => {
+    res.send(`
+        <h1>مرحباً يا ماهر البدري</h1>
+        <p>حالة البوت: ${isConnected ? '✅ متصل' : '❌ غير متصل'}</p>
+        <a href="/qr">اضغط هنا لعرض الباركود للربط</a>
+    `);
+});
+
+// صفحة الباركود
+app.get('/qr', async (req, res) => {
+    if (!latestQr) return res.send('جاري تحضير الباركود.. انتظر لحظات وعيد تحميل الصفحة');
+    res.type('png').send(await qrcode.toBuffer(latestQr));
+});
+
+// دالة الرد بالذكاء الاصطناعي
 async function getAIReply(text) {
     try {
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -22,21 +37,14 @@ async function getAIReply(text) {
         });
         const data = await response.json();
         return data.choices[0].message.content;
-    } catch (e) { return "الورشة مشغولة حالياً، كلمني خاص."; }
+    } catch (e) { return "الورشة مشغولة حالياً، سأرد عليك لاحقاً."; }
 }
-
-app.get('/qr', async (req, res) => {
-    if (!latestQr) return res.send('جاري التحضير.. انتظر لحظات');
-    res.type('png').send(await qrcode.toBuffer(latestQr));
-});
-
-app.listen(PORT);
 
 async function startBridge() {
     const authPath = process.env.AUTH_DIR || './auth_info';
     const { state, saveCreds } = await useMultiFileAuthState(authPath);
     
-    // الحل الجذري للخطأ 515 بتغيير تعريف المتصفح
+    // تعريف المتصفح لإصلاح خطأ 515
     const sock = makeWASocket({ 
         auth: state, 
         printQRInTerminal: true, 
@@ -60,4 +68,6 @@ async function startBridge() {
         }
     });
 }
+
+app.listen(PORT, () => console.log('السيرفر يعمل على بورت ' + PORT));
 startBridge();
