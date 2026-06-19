@@ -33,47 +33,32 @@ const DEFAULT_FALLBACK_TEXT = 'مرحبًا بك في ورشة ماهر البد
   '10. مقص 8 بوصة لقص المواسير الحديد : 100 ريال\n\n' +
   'لأي استفسار أو صيانة وتصليح ماكينات، تشرفنا في الورشة أو كلم المهندس ماهر البدري.';
 
-const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق في مكة. رد بالعامية المصرية وبشكل مختصر ومفيد جداً. نادِ العميل باسمه أول الرد إن أمكن.';
+const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق في مكة. رد بالعامية المصرية وبشكل مختصر ومفيد جداً. نادِ العميل باسمه أول الرد.';
 
-const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
-let keyIndex = 0;
+// البديل المستقر والمجاني والسريع تماماً لتفادي مشاكل جيميناي وقفل الحسابات
+const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || '825fa7e8d2e30bba9b5e52da5c3bb95a';
+const CF_API_TOKEN = process.env.CF_API_TOKEN || 'v76lEul9q6T64_K0_PkaGkZ33gM8L6_iM6f89z5t';
 
-async function callAIGemini(userMsg) {
-  if (GEMINI_KEYS.length === 0) return null;
-  
-  // دمج البرومبت مع رسالة المستخدم في نص واحد لضمان استجابة جيميناي بدون أخطاء تشكيل الهيكل
-  const fullPrompt = `${SYSTEM_PROMPT}\n\nرسالة العميل الحالية: ${userMsg}\n\nالرد بالعامية المصرية باختصار:`;
-  
-  for (let i = 0; i < GEMINI_KEYS.length; i++) {
-    const idx = (keyIndex + i) % GEMINI_KEYS.length;
-    const apiKey = GEMINI_KEYS[idx];
-    
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
-    
-    try {
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: fullPrompt }] }],
-          generationConfig: { temperature: 0.7, maxOutputTokens: 300 }
-        }),
-        signal: controller.signal
-      });
-      
-      clearTimeout(timer);
-      if (res.status === 200) {
-        keyIndex = (idx + 1) % GEMINI_KEYS.length;
-        const j = await res.json();
-        return j.candidates?.[0]?.content?.parts?.[0]?.text || null;
-      } else {
-        console.error('Gemini Key Error, status:', res.status);
-      }
-    } catch (e) {
-      clearTimeout(timer);
+async function callCloudflare(userMsg) {
+  const msgs = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: userMsg }
+  ];
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 8000);
+    const r = await fetch('https://api.cloudflare.com/client/v4/accounts/' + CF_ACCOUNT_ID + '/ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + CF_API_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', messages: msgs, temperature: 0.7, max_tokens: 300 }),
+      signal: c.signal
+    });
+    clearTimeout(t);
+    if (r.status === 200) {
+      const j = await r.json();
+      return j.choices?.[0]?.message?.content || null;
     }
-  }
+  } catch (e) {}
   return null;
 }
 
@@ -83,7 +68,7 @@ let wsConnected = false;
 
 app.get('/status', (req, res) => res.json({ connected: wsConnected }));
 app.get('/qr', async (req, res) => {
-  if (!latestQr) return res.send('<h1>البوت متصل بالفعل وجاهز للعمل!</h1>');
+  if (!latestQr) return res.send('<h1>البوت متصل شغال أو الجلسة جاري تحميلها.. انتظر ثواني</h1>');
   res.setHeader('Content-Type', 'image/png');
   res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
 });
@@ -97,8 +82,7 @@ async function startBridge() {
   const sock = makeWASocket({
     auth: state,
     logger: pino({ level: 'silent' }),
-    browser: ['Ubuntu', 'Chrome', '110.0.0.0'],
-    connectTimeoutMs: 60000
+    browser: ['Ubuntu', 'Chrome', '110.0.0.0'] // متصفح ثابت ومستقر يمنع طلب الباركود المتكرر
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -108,7 +92,7 @@ async function startBridge() {
     if (connection === 'open') {
       wsConnected = true;
       latestQr = null;
-      console.log('✅ تم الاتصال والتشغيل!');
+      console.log('✅ تم الاتصال والتشغيل الثابت!');
     }
     if (connection === 'close') {
       wsConnected = false;
@@ -126,16 +110,16 @@ async function startBridge() {
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         if (!text) continue;
 
-        // استدعاء جيميناي بالتركيبة الجديدة المستقرة
-        let replyText = await callAIGemini(text);
+        // الرد الذكي الفوري من سيرفر كلوود فلير المضمون
+        let replyText = await callCloudflare(text);
         
-        // إذا فشل جيميناي أو المفاتيح فيها مشكلة، يرجع للموحدة تلقائياً
+        // لو السيرفر الخارجي علق تماماً يرجع للموحدة كأمان
         if (!replyText) {
           replyText = DEFAULT_FALLBACK_TEXT;
         }
 
         await sock.sendPresenceUpdate('composing', jid);
-        await new Promise(r => setTimeout(r, 1200));
+        await new Promise(r => setTimeout(r, 1000));
         await sock.sendMessage(jid, { text: replyText }).catch(() => {});
       } 
     } catch(e) {}
