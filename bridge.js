@@ -163,7 +163,7 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدا
 '** انضمام الجروب **\n' +
 'إذا طلب أحد الانضمام لجروب الواتساب الخاص بالمؤسسة:\n' +
 '1. اسأله أولاً: "هل أنت سباك؟"\n' +
-'2. إذا قال نعم أو أي تأكيد: أعطه رابط الجروب: https://chat.whatsapp.com/DL3qCnpSs6fHU5VYZgDgNL\n' +
+'2. إذا قال نعم أو أي تأكيد: أعطه رابط الجروب: https://chat.whatsapp.com/DL3qCnpSs6fHU5VYZgDgNL?s=cl&p=a&mlu=0&amv=2\n' +
 '3. وحذره: لا تنشر أي صور لمواد السباكة أو الحريق (حديد أو بلاستيك) لأن هذا جروب خاص بالمؤسسة فقط';
 
 async function callAI(systemPrompt, history, userMsg, retries = 2) {
