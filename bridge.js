@@ -143,7 +143,7 @@ const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدا
   '  * العملاء (غير العائلة): رد باللهجة المصرية فقط وتعامل معهم كعملاء\n' +
   '  * العائلة: رد بنفس لهجة المتصل\n' +
   '** قائمة العائلة **\n' +
-  '- الزوجة: ام سعاد - ناديها "يا مزتي" أو "يا حياتي"\n' +
+  '- الزوجة: ام سعاد او حوده ماهر- ناديها "يا مزتي" أو "يا حياتي"\n' +
   '- الابنة الكبرى: سعاد (سوسه) - ناديها "سوسه" أو "يا بعدي"\n' +
   '- الابنة الوسطى: ايه (ايويه) - ناديها "ايويه" أو "يا قمر"\n' +
   '- الابن الصغير: نورا - ناديها "نورا"\n' +
@@ -718,11 +718,11 @@ async function startBridge() {
             saveAiDisabledPhones(aiDisabledPhones);
           }
           await sock.sendPresenceUpdate('composing', sendTo);
-          await new Promise(r => setTimeout(r, 9000));
+          await new Promise(r => setTimeout(r, 8000));
           await sock.sendMessage(sendTo, { text: '✅ تم إيقاف الزكاء عن الرقم ' + num + '. أنت هترد عليه.' });
         } else {
           await sock.sendPresenceUpdate('composing', sendTo);
-          await new Promise(r => setTimeout(r, 9000));
+          await new Promise(r => setTimeout(r, 8000));
           await sock.sendMessage(sendTo, { text: 'أكتب الرقم كامل، مثال:\nالغاء 201093122475' });
         }
         lastReply = 'DISABLE: ' + num;
@@ -829,7 +829,7 @@ async function startBridge() {
       if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
       lastReply = replyText.substring(0, 100);
      await sock.sendPresenceUpdate('composing', sendTo);
-await new Promise(r => setTimeout(r, 9000));
+await new Promise(r => setTimeout(r, 8000));
 await sock.readMessages([msg.key]).catch(() => {});
 await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
       history.push({ role: 'assistant', content: replyText });
