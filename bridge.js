@@ -26,7 +26,10 @@ function saveIgnored() { fs.writeFileSync(IGNORED_FILE, JSON.stringify(ignoredNu
 
 let familyContacts = [];
 try { if (fs.existsSync(FAMILY_FILE)) familyContacts = JSON.parse(fs.readFileSync(FAMILY_FILE)); } catch(e) {}
-function saveFamily() { fs.writeFileSync(FAMILY_FILE, JSON.stringify(familyContacts)); }
+function saveFamily() { 
+    fs.writeFileSync(FAMILY_FILE, JSON.stringify(familyContacts)); 
+    console.log('[System] Data Saved to File:', familyContacts);
+}
 
 function startKeepAlive() {
   setInterval(() => {
@@ -161,12 +164,15 @@ app.post('/set-mode', (req, res) => { aiMode = req.body.mode; res.json({ success
 app.post('/add-family', (req, res) => { const { phone, name } = req.body; if(phone && name && !familyContacts.find(f=>cleanPhone(f.phone)===cleanPhone(phone))){ familyContacts.push({phone, name, active: true}); saveFamily(); } res.json({ success: true }); });
 app.post('/toggle-family', (req, res) => { 
     const phone = req.body.phone; 
+    console.log('[Toggle Request] Trying to toggle phone:', phone);
     const f = familyContacts.find(x => cleanPhone(x.phone) === cleanPhone(phone)); 
     if(f) { 
         f.active = !f.active; 
-        saveFamily(); 
         console.log(`[Status Change] ${f.name} is now ${f.active ? 'Active' : 'Inactive'}`);
-    } 
+        saveFamily(); 
+    } else {
+        console.log('[Error] Contact not found for toggle:', phone);
+    }
     res.json({ success: true }); 
 });
 app.post('/remove-family', (req, res) => { familyContacts = familyContacts.filter(x=>cleanPhone(x.phone) !== cleanPhone(req.body.phone)); saveFamily(); res.json({ success: true }); });
@@ -225,6 +231,7 @@ async function startBridge() {
         const family = familyContacts.find(f => cleanPhone(f.phone) === senderPhone);
         
         // --- المنطق الصارم للإيقاف ---
+        // إذا كان موجوداً في القائمة وحالته active = false، يتم تجاهل الرسالة
         if (family && family.active === false) {
              console.log(`[Bot Ignored] Blocked contact: ${senderPhone}`);
              continue; 
