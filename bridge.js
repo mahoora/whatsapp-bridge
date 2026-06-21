@@ -10,6 +10,12 @@ const FormData = require('form-data');
 const { exec } = require('child_process');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
+const IGNORED_FILE = './ai-disabled.json'; // ملف حفظ الأرقام المستثناة
+
+// تحميل الأرقام المستثناة
+let ignoredNumbers = [];
+try { if (fs.existsSync(IGNORED_FILE)) ignoredNumbers = JSON.parse(fs.readFileSync(IGNORED_FILE)); } catch(e) {}
+function saveIgnored() { fs.writeFileSync(IGNORED_FILE, JSON.stringify(ignoredNumbers)); }
 
 function startKeepAlive() {
   setInterval(() => {
@@ -151,7 +157,6 @@ const HISTORY_FILE = './conversation-history.json';
 const MAX_HISTORY = 30;
 let conversationHistory = loadHistory();
 let familyContacts = loadFamilyContacts();
-let aiDisabledPhones = loadAiDisabledPhones();
 let aiMode = 'ai';
 
 function transcribeAudio(audioBuffer) {
@@ -176,11 +181,19 @@ let currentSock = null;
 let wsConnected = false;
 let restartTimer = null;
 
+// مسارات التحكم المضافة
 app.post('/set-mode', (req, res) => { aiMode = req.body.mode; res.json({ success: true, mode: aiMode }); });
+app.post('/add-ignore', (req, res) => { const phone = req.body.phone; if(phone && !ignoredNumbers.includes(phone)){ ignoredNumbers.push(phone); saveIgnored(); } res.json({ success: true }); });
+app.post('/remove-ignore', (req, res) => { ignoredNumbers = ignoredNumbers.filter(n => n !== req.body.phone); saveIgnored(); res.json({ success: true }); });
 
 app.get('/status', (req, res) => { res.json({ connected: wsConnected, mode: aiMode }); });
 
 app.get('/', (req, res) => {
+  let listHtml = ignoredNumbers.map(n => `
+    <li style="margin:5px; padding:5px; background:#2c2c54; border-radius:5px; color:white; display:flex; justify-content:space-between;">
+      ${n} <button onclick="fetch('/remove-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${n}'})}).then(()=>location.reload())" style="color:white; background:red; border:none; cursor:pointer;">حذف</button>
+    </li>`).join('');
+
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title></head>
   <body style="background:#1a1a2e;color:#eee;text-align:center;font-family:sans-serif;">
   <h1>بوت ماهر البدري</h1>
@@ -188,6 +201,14 @@ app.get('/', (req, res) => {
   <h3>الوضع الحالي: ${aiMode === 'ai' ? '🤖 تلقائي' : '✋ يدوي'}</h3>
   <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'ai'})}).then(()=>location.reload())" style="padding:15px; margin:10px; font-size:20px; background:green; color:white; border:none; border-radius:10px;">تشغيل التلقائي</button>
   <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'manual'})}).then(()=>location.reload())" style="padding:15px; margin:10px; font-size:20px; background:red; color:white; border:none; border-radius:10px;">إيقاف البوت (يدوي)</button>
+  
+  <div style="margin-top:20px; padding:10px; border-top:1px solid #444;">
+    <h3>الأرقام المستثناة (لن يرد عليها البوت):</h3>
+    <input id="newPhone" placeholder="أدخل الرقم" style="padding:10px; border-radius:5px;">
+    <button onclick="const p=document.getElementById('newPhone').value; fetch('/add-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:p})}).then(()=>location.reload())" style="padding:10px; background:blue; color:white; border:none; border-radius:5px; cursor:pointer;">إضافة</button>
+    <ul style="list-style:none; padding:0; width:300px; margin:10px auto;">${listHtml}</ul>
+  </div>
+
   ${!wsConnected && latestQr ? `<img src="/qr" style="border:4px solid #e94560;border-radius:10px;">` : ''}
   </body></html>`);
 });
@@ -210,7 +231,9 @@ async function startBridge() {
 
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || '';
         const senderPhone = jid.split('@')[0].replace(/[^0-9]/g, '');
-        if (aiDisabledPhones.some(p => senderPhone.includes(p) || jid.includes(p))) continue;
+        
+        // التحقق من قائمة التجاهل قبل أي شيء
+        if (ignoredNumbers.includes(senderPhone)) continue; 
 
         if (msg.message?.audioMessage && !text) {
           try { const buffer = await downloadMediaMessage(msg, 'buffer', {}); text = await transcribeAudio(buffer); } catch (e) { continue; }
