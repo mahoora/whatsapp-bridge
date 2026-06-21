@@ -2,9 +2,7 @@ require('dotenv').config();
 const { makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
-const ordersDb = require('./orders-db');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -58,15 +56,9 @@ function loadFamilyContacts() {
   try { return JSON.parse(fs.readFileSync('./family-contacts.json')); }
   catch(e) { return []; }
 }
-function saveFamilyContacts(data) {
-  fs.writeFileSync('./family-contacts.json', JSON.stringify(data, null, 2));
-}
 function loadAiDisabledPhones() {
   try { return JSON.parse(fs.readFileSync('./ai-disabled.json')); }
   catch(e) { return []; }
-}
-function saveAiDisabledPhones(data) {
-  fs.writeFileSync('./ai-disabled.json', JSON.stringify(data, null, 2));
 }
 
 function getSystemPrompt() {
@@ -95,28 +87,20 @@ function getSystemPrompt() {
   '- للعائلة: رد بنفس لهجة اللي كلمك\n' +
   '- العربية الفصحى ممنوع. رد بالعامية فقط\n' +
   '- **العملاء (غير العائلة): ناديهم باسمهم اللي جايزلك (مثلاً "مرحبا أحمد"). استخدم اسم العميل في أول رد.**\n' +
-  '- **العملاء (غير العائلة): رد باللهجة المصرية فقط - استخدم الكلمات المصرية دي**\n' +
-  'قاموس اللهجة المصرية: إيه، عايز/عايزة، كده، دلوقتي، هو إيه، مش، عشان، بكره، النهارده، أمبارح، كلمني، خلاص، طيب، إزيك، أهلاً، ينفع، مينفعش، كام، ده/دي، أوامر، تمام، ماله/مالها، بس، كمان، برضه، أهو، بقى، أيوة، لأ، يبقى.\n' +
+  '- **العملاء (غير العائلة): رد باللهجة المصرية فقط**\n' +
   '- إذا سأل عن منتج: قول اسمه وسعره من القائمة\n' +
   '- إذا سأل عن الإيجار: قول سعر اليوم\n' +
-  '- تصليح أو قطع غيار: "موجود كل حاجة إن شاء الله، جيبها الورشة"\n' +
+  '- تصليح أو قطع غيار: "موجود كل حاجة إن شاء الله، جيبها الورشة للمهندس ماهر"\n' +
   '- إذا طلب طلب: اسأله عن اسمه فقط وشو يبي بالضبط\n' +
-  '- لما ترد على العائلة: كلمهم كأهلك. لا تعرف بنفسك. استخدم أسلوبهم.\n' +
-  '- العائلة: نادي الشخص باسمه أو بلقبه في أول رد على المحادثة فقط، وفي الردود التالية رد عليه مباشرة بدون ذكر اسمه مجدداً.' +
-  '- ردودك قصيرة قد السؤال. لا تقول اسمك ولا عنوانك إلا إذا سألوك.\n' +
-  '- عربي فقط. ممنوع أي إنجليزي.\n' +
-  '- **قائمة العائلة:** الزوجة (يا مزتي)، سعاد (سوسة)، إيه (ايوية)، نورا (نورا)، حودة (حودة)، ام السعيد/ياسمين/ملك (يا أختي)، بطة/بوبس/هيمومة (يا بنتي)، ابو عماد (بو عماد).\n' +
-  '** قسم طقم الأسنان **\n' +
-  'إذا احتوت الرسالة على (أسنان، أسنان ماكينة، طقم أسنان): رد فوراً بدون مقدمات: "طقم الأسنان موجود ومتوفر للبيع ومتاح في الورشة علطول يا فندم، تنورنا في أي وقت!"\n' +
+  '- ردودك قصيرة قد السؤال.\n' +
+  '- عربي فقط.\n' +
+  '** قسم الأسنان **: "طقم الأسنان موجود ومتوفر للبيع ومتاح في الورشة علطول يا فندم، تنورنا في أي وقت!"\n' +
   '** قسم بيع مواد السباكة: ** موجود متوفر عندنا مواد السباكة الحديد والبلاستيك يا فندم، ابعت لنا الكشف أو الطلبات اللي محتاجها بالكميات، وأنا هسعر هولك وأبعتهولك علطول! (كلم أحمد: +96659383768)\n' +
-  'إذا احتوت الرسالة على (موتور، طرمبة، طرمبة زيت، لقمة، لوقم، تصليح، اصلاح، اصلح، اصلحها، عطلانة، عطلان، عطل، صيانة، طريقة تصليح، مكنه، ماكنة، عندي مكنه): رد فوراً: "أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه."\n' +
-  '** قسم تكلفة الصيانة: ** التكلفة دي بتكون حسب ما المهندس ماهر يشوف المكنة ويعاين العطل بنفسه، أو أنا بجيب لك الأسعار من المهندس علطول. تشرفنا في الورشة!\n' +
-  '** انضمام الجروب: ** إذا طلب الانضمام: 1. اسأله: هل أنت سباك؟ 2. إذا نعم: أعطه الرابط: https://chat.whatsapp.com/DL3qCnpSs6fHU5VYZgDgNL?s=cl&p=a&mlu=0&amv=2';
+  '** قسم الصيانة: ** "أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه."';
 }
 
 const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 let keyIndex = 0;
-
 const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || '';
 const CF_API_TOKEN = process.env.CF_API_TOKEN || '';
 
@@ -135,10 +119,7 @@ async function callCloudflare(systemPrompt, history, userMsg) {
       signal: c.signal
     });
     clearTimeout(t);
-    if (r.status === 200) {
-      const j = await r.json();
-      return j.choices?.[0]?.message?.content || '';
-    }
+    if (r.status === 200) { const j = await r.json(); return j.choices?.[0]?.message?.content || ''; }
     return null;
   } catch (e) { return null; }
 }
@@ -154,17 +135,13 @@ async function callAIGemini(systemPrompt, history, userMsg) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
     try {
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' + apiKey, {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } }),
         signal: controller.signal
       });
       clearTimeout(timer);
-      if (res.status === 200) {
-        keyIndex = (idx + 1) % GEMINI_KEYS.length;
-        const j = await res.json();
-        return j.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      }
+      if (res.status === 200) { keyIndex = (idx + 1) % GEMINI_KEYS.length; const j = await res.json(); return j.candidates?.[0]?.content?.parts?.[0]?.text || ''; }
     } catch (e) { clearTimeout(timer); }
   }
   return null;
@@ -183,215 +160,87 @@ function transcribeAudio(audioBuffer) {
     form.append('file', audioBuffer, { filename: 'audio.ogg', contentType: 'audio/ogg' });
     form.append('model', 'whisper-large-v3-turbo');
     form.append('language', 'ar');
-    const opts = {
-      hostname: 'api.groq.com', path: '/openai/v1/audio/transcriptions',
-      method: 'POST', timeout: 30000,
-        headers: form.getHeaders({ 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY })
-    };
-    const req = https.request(opts, res => {
-      let b = '';
-      res.on('data', c => b += c);
-      res.on('end', () => {
-        try { const j = JSON.parse(b); resolve(j.text || ''); }
-        catch (e) { reject(e); }
-      });
-    });
+    const opts = { hostname: 'api.groq.com', path: '/openai/v1/audio/transcriptions', method: 'POST', timeout: 30000, headers: form.getHeaders({ 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY }) };
+    const req = https.request(opts, res => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { const j = JSON.parse(b); resolve(j.text || ''); } catch (e) { reject(e); } }); });
     req.on('error', reject);
     form.pipe(req);
   });
 }
 
-function loadHistory() {
-  try {
-    const data = JSON.parse(fs.readFileSync(HISTORY_FILE));
-    return new Map(Object.entries(data));
-  } catch (e) {
-    try {
-      const envData = process.env.HISTORY_JSON;
-      if (envData) return new Map(Object.entries(JSON.parse(Buffer.from(envData, 'base64').toString())));
-    } catch (e2) {}
-    return new Map();
-  }
-}
-function saveHistory() {
-  const obj = {};
-  for (const [key, val] of conversationHistory) { obj[key] = val; }
-  const str = JSON.stringify(obj);
-  fs.writeFileSync(HISTORY_FILE, str);
-  try { renderUpdateEnv('HISTORY_JSON', Buffer.from(str).toString('base64')); } catch (e) {}
-}
+function loadHistory() { try { const data = JSON.parse(fs.readFileSync(HISTORY_FILE)); return new Map(Object.entries(data)); } catch (e) { return new Map(); } }
+function saveHistory() { const obj = {}; for (const [key, val] of conversationHistory) { obj[key] = val; } fs.writeFileSync(HISTORY_FILE, JSON.stringify(obj)); try { renderUpdateEnv('HISTORY_JSON', Buffer.from(JSON.stringify(obj)).toString('base64')); } catch (e) {} }
 
 const app = express();
 app.use(express.json());
 let currentSock = null;
 let wsConnected = false;
-let msgCount = 0;
 let restartTimer = null;
 
-app.post('/send', async (req, res) => {
-  const { to, text } = req.body;
-  if (!to || !text) return res.status(400).json({ error: 'Missing fields' });
-  try {
-    await currentSock.sendMessage(to, { text });
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
+app.post('/set-mode', (req, res) => { aiMode = req.body.mode; res.json({ success: true, mode: aiMode }); });
 
-app.get('/status', (req, res) => { res.json({ connected: wsConnected, user: currentSock?.user?.id || null }); });
-
-app.get('/qr', async (req, res) => {
-  if (!latestQr) return res.status(404).send('Wait for QR...');
-  res.setHeader('Content-Type', 'image/png');
-  res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
-});
-
-app.get('/admin', (req, res) => {
-  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title></head><body style="background:#1a1a2e; color:white; text-align:center;"><h2>🔧 تحكم البوت: ${wsConnected ? 'متصل ✅' : 'غير متصل ❌'}</h2><br><a href="/admin" style="color:yellow;">تحديث</a></body></html>`);
-});
+app.get('/status', (req, res) => { res.json({ connected: wsConnected, mode: aiMode }); });
 
 app.get('/', (req, res) => {
-  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماهر Al-Badri</title></head><body style="background:#1a1a2e;color:#eee;text-align:center;"><h1>🔧 ماهر البدري - معدات حريق</h1><h2>${wsConnected ? '✅ متصل' : '❌ غير متصل'}</h2>${!wsConnected && latestQr ? `<img src="/qr" style="border:4px solid #e94560;border-radius:10px;">` : ''}</body></html>`);
+  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title></head>
+  <body style="background:#1a1a2e;color:#eee;text-align:center;font-family:sans-serif;">
+  <h1>بوت ماهر البدري</h1>
+  <h2>الحالة: ${wsConnected ? '✅ متصل' : '❌ غير متصل'}</h2>
+  <h3>الوضع الحالي: ${aiMode === 'ai' ? '🤖 تلقائي' : '✋ يدوي'}</h3>
+  <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'ai'})}).then(()=>location.reload())" style="padding:15px; margin:10px; font-size:20px; background:green; color:white; border:none; border-radius:10px;">تشغيل التلقائي</button>
+  <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'manual'})}).then(()=>location.reload())" style="padding:15px; margin:10px; font-size:20px; background:red; color:white; border:none; border-radius:10px;">إيقاف البوت (يدوي)</button>
+  ${!wsConnected && latestQr ? `<img src="/qr" style="border:4px solid #e94560;border-radius:10px;">` : ''}
+  </body></html>`);
 });
+
+app.get('/qr', async (req, res) => { if (!latestQr) return res.status(404).send('Wait...'); res.setHeader('Content-Type', 'image/png'); res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 })); });
 
 async function startBridge() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-
-  const sock = makeWASocket({
-    printQRInTerminal: true,
-    auth: state,
-    logger: pino({ level: 'silent' }),
-    browser: ['Chrome', 'Chrome', '120.0'],
-    markOnlineOnConnect: false
-  });
+  const sock = makeWASocket({ printQRInTerminal: true, auth: state, logger: pino({ level: 'silent' }), browser: ['Chrome', 'Desktop', '1.0'], markOnlineOnConnect: false });
   currentSock = sock;
-
   sock.ev.on('creds.update', () => { saveCreds(); saveCredsToEnv(); });
-
-  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr) latestQr = qr;
-    if (connection === 'open') wsConnected = true;
-    if (connection === 'close') {
-      wsConnected = false;
-      if (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut && !restartTimer) {
-        restartTimer = setTimeout(() => { restartTimer = null; startBridge(); }, 10000);
-      }
-    }
-  });
+  sock.ev.on('connection.update', ({ connection, qr }) => { if (qr) latestQr = qr; if (connection === 'open') wsConnected = true; if (connection === 'close') { wsConnected = false; if (!restartTimer) restartTimer = setTimeout(() => { restartTimer = null; startBridge(); }, 5000); } });
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
-    try { 
-      // محذوف تأخير الوقت عشان الرسالة توصل أسرع والموبايل يرن
+    try {
       for (const msg of messages) {
-      if (!msg.key || msg.key.fromMe) continue;
-      const jid = msg.key.remoteJid;
-      if (jid.endsWith('@g.us') || jid === 'status@broadcast' || jid.endsWith('@newsletter')) continue;
+        if (!msg.key || msg.key.fromMe) continue;
+        const jid = msg.key.remoteJid;
+        if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
 
-      let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || '';
-      const from = jid;
-      let sendTo = from;
-      let sender = msg.pushName || 'Unknown';
-      const senderPhone = from.split('@')[0].replace(/[^0-9]/g, '');
+        let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || '';
+        const senderPhone = jid.split('@')[0].replace(/[^0-9]/g, '');
+        if (aiDisabledPhones.some(p => senderPhone.includes(p) || jid.includes(p))) continue;
 
-      if (aiDisabledPhones.some(p => senderPhone.includes(p) || from.includes(p))) continue;
+        if (msg.message?.audioMessage && !text) {
+          try { const buffer = await downloadMediaMessage(msg, 'buffer', {}); text = await transcribeAudio(buffer); } catch (e) { continue; }
+        }
+        if (!text) continue;
 
-      const audioMsg = msg.message?.audioMessage;
-      if (audioMsg && !text) {
-        try {
-          const buffer = await downloadMediaMessage(msg, 'buffer', {});
-          text = await transcribeAudio(buffer);
-        } catch (e) { continue; }
-      }
+        const tlow = text.trim();
+        if (tlow === 'يدوي') { aiMode = 'manual'; await sock.sendMessage(jid, { text: '✅ تم التحويل للرد اليدوي.' }); continue; }
+        if (tlow === 'تلقائي') { aiMode = 'ai'; await sock.sendMessage(jid, { text: '✅ تم التحويل للتلقائي.' }); continue; }
+        if (aiMode === 'manual') continue;
 
-      if (!text) continue;
-      msgCount++;
-
-      if (!conversationHistory.has(from)) conversationHistory.set(from, []);
-      const history = conversationHistory.get(from);
-      history.push({ role: 'user', content: text });
-      if (history.length > MAX_HISTORY) history.shift();
-      try { saveHistory(); } catch(e) {}
-
-      const tlow = text.trim();
-      if (tlow === 'يدوي' || tlow === 'يدي') {
-        aiMode = 'manual';
-        await sock.sendMessage(sendTo, { text: '✅ تم التحويل إلى الرد اليدوي.' });
-        continue;
-      }
-      if (tlow === 'تلقائي' || tlow === 'زكاء') {
-        aiMode = 'ai';
-        await sock.sendMessage(sendTo, { text: '✅ تم التشغيل. الزكاء هيرد.' });
-        continue;
-      }
-      
-      if (aiMode === 'manual') continue;
-
-      const hasPushName = msg.pushName && sender !== 'Unknown' && sender.trim() !== '';
-      if (!hasPushName && history.length <= 1) {
-        const eqList = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
-          '📍 شارع الحج، مكة المكرمة، الصنايعية الجديدة\n\n' +
-          'قائمة الإيجار (ريال/اليوم):\n' +
-          '1. ماكينة سن 2 بوصة ← 100 ريال\n' +
-          '2. ماكينة سن 3 بوصة ← 120 ريال\n' +
-          '3. مكنة جروف ← 80 ريال\n' +
-          '4. خواشة مواسير ← 50 ريال\n' +
-          '5. مكنة باركود HDP ← 200 ريال\n' +
-          '6. مكنة ضغط مياه (كهرباء) ← 50 ريال\n' +
-          '7. مكنة ضغط مياه (ديزل) ← 70 ريال\n' +
-          '8. مكنة HDP راس في راس ← 200 ريال\n' +
-          '9. مولد كهرباء 3 كيلو ← 100 ريال\n' +
-          '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال\n\n' +
-          'للطلب أو الاستفسار: كلم المهندس ماهر البدري';
-        await sock.sendMessage(sendTo, { text: eqList }).catch(() => {});
-        history.push({ role: 'assistant', content: eqList });
+        if (!conversationHistory.has(jid)) conversationHistory.set(jid, []);
+        const history = conversationHistory.get(jid);
+        history.push({ role: 'user', content: text });
         if (history.length > MAX_HISTORY) history.shift();
-        try { saveHistory(); } catch(e) {}
-        continue;
+        
+        const family = familyContacts.find(f => f.phone && (jid.includes(f.phone) || senderPhone.includes(f.phone)));
+        let familyContext = family ? ` [هذا من العائلة: ${family.relationship}]` : '';
+
+        let replyText = await callAIGemini(getSystemPrompt(), history.slice(-10), familyContext + '\n' + text);
+        if (!replyText) replyText = await callCloudflare(getSystemPrompt(), history.slice(-10), familyContext + '\n' + text);
+
+        if (!replyText) replyText = 'آسف، كلمني على الخاص.';
+        await sock.sendMessage(jid, { text: replyText });
+        history.push({ role: 'assistant', content: replyText });
+        saveHistory();
       }
-
-      const family = familyContacts.find(f => f.phone && (from.includes(f.phone) || senderPhone.includes(f.phone)));
-      let familyContext = family ? ` [هذا من العائلة: ${family.relationship} (${family.name}). رد طبيعي بدون تعريف بنفسك، ${family.style}]` : ` [اسم العميل: ${sender}. ناديه باسمه في الرد وقل "مرحبا ${sender}"]`;
-
-      let replyText = '';
-      const h = history.slice(-10, -1);
-      
-      replyText = await callAIGemini(getSystemPrompt(), h, familyContext + '\n' + text);
-      if (!replyText) replyText = await callCloudflare(getSystemPrompt(), h, familyContext + '\n' + text);
-      if (!replyText) {
-        try {
-          const msgs = [{ role: 'system', content: getSystemPrompt() }];
-          for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
-          msgs.push({ role: 'user', content: familyContext + '\n' + text });
-          const c2 = new AbortController();
-          const t2 = setTimeout(() => c2.abort(), 30000);
-          const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
-            signal: c2.signal
-          });
-          clearTimeout(t2);
-          if (r2.status === 200) {
-            const j2 = await r2.json();
-            replyText = j2.choices?.[0]?.message?.content || '';
-          }
-        } catch (err) {}
-      }
-
-      if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
-
-      // تم حذف كل أكواد الـ (composing) اللي كانت بتخلي الواتساب يمنع الإشعار
-
-      await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
-      history.push({ role: 'assistant', content: replyText });
-      if (history.length > MAX_HISTORY) history.shift();
-      try { saveHistory(); } catch(e) {}
-      
-    } } catch(e) { console.error('FATAL: ' + e.message); }
+    } catch(e) { console.error(e); }
   });
 }
 
-app.listen(BRIDGE_PORT, () => {
-  console.log('Bridge API on http://localhost:' + BRIDGE_PORT);
-});
+app.listen(BRIDGE_PORT, () => { console.log('Server running'); startBridge(); });
 startKeepAlive();
-startBridge().catch(console.error);
