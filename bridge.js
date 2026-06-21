@@ -12,7 +12,6 @@ const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
 const IGNORED_FILE = './ai-disabled.json';
 const FAMILY_FILE = './family-contacts.json';
 
-// دالة تنظيف الرقم لتوحيد الصيغة
 function cleanPhone(phone) {
   let p = String(phone).replace(/[^0-9]/g, '');
   if (p.startsWith('966')) p = p.substring(3);
@@ -26,10 +25,7 @@ function saveIgnored() { fs.writeFileSync(IGNORED_FILE, JSON.stringify(ignoredNu
 
 let familyContacts = [];
 try { if (fs.existsSync(FAMILY_FILE)) familyContacts = JSON.parse(fs.readFileSync(FAMILY_FILE)); } catch(e) {}
-function saveFamily() { 
-    fs.writeFileSync(FAMILY_FILE, JSON.stringify(familyContacts)); 
-    console.log('[System] Data Saved to File:', familyContacts);
-}
+function saveFamily() { fs.writeFileSync(FAMILY_FILE, JSON.stringify(familyContacts)); }
 
 function startKeepAlive() {
   setInterval(() => {
@@ -162,19 +158,20 @@ let restartTimer = null;
 
 app.post('/set-mode', (req, res) => { aiMode = req.body.mode; res.json({ success: true, mode: aiMode }); });
 app.post('/add-family', (req, res) => { const { phone, name } = req.body; if(phone && name && !familyContacts.find(f=>cleanPhone(f.phone)===cleanPhone(phone))){ familyContacts.push({phone, name, active: true}); saveFamily(); } res.json({ success: true }); });
+
+// تعديل دالة التبديل لتكون مباشرة وتحدث المصفوفة فوراً
 app.post('/toggle-family', (req, res) => { 
     const phone = req.body.phone; 
-    console.log('[Toggle Request] Trying to toggle phone:', phone);
-    const f = familyContacts.find(x => cleanPhone(x.phone) === cleanPhone(phone)); 
-    if(f) { 
-        f.active = !f.active; 
-        console.log(`[Status Change] ${f.name} is now ${f.active ? 'Active' : 'Inactive'}`);
+    const target = cleanPhone(phone);
+    const index = familyContacts.findIndex(x => cleanPhone(x.phone) === target);
+    if(index !== -1) { 
+        familyContacts[index].active = !familyContacts[index].active; 
         saveFamily(); 
-    } else {
-        console.log('[Error] Contact not found for toggle:', phone);
-    }
-    res.json({ success: true }); 
+        console.log(`[Status Change] ${familyContacts[index].name} is now ${familyContacts[index].active ? 'Active' : 'Inactive'}`);
+    } 
+    res.json({ success: true, active: index !== -1 ? familyContacts[index].active : null }); 
 });
+
 app.post('/remove-family', (req, res) => { familyContacts = familyContacts.filter(x=>cleanPhone(x.phone) !== cleanPhone(req.body.phone)); saveFamily(); res.json({ success: true }); });
 
 app.get('/status', (req, res) => { res.json({ connected: wsConnected, mode: aiMode }); });
@@ -227,16 +224,12 @@ async function startBridge() {
         if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
 
         const senderPhone = cleanPhone(jid.split('@')[0]);
-        // البحث باستخدام المقارنة المنظفة
         const family = familyContacts.find(f => cleanPhone(f.phone) === senderPhone);
         
-        // --- المنطق الصارم للإيقاف ---
-        // إذا كان موجوداً في القائمة وحالته active = false، يتم تجاهل الرسالة
         if (family && family.active === false) {
              console.log(`[Bot Ignored] Blocked contact: ${senderPhone}`);
              continue; 
         }
-        // ------------------------------
 
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || '';
         
