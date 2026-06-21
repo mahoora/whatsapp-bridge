@@ -13,8 +13,6 @@ const { exec } = require('child_process');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
 
-
-// Keep Render awake + save history every 5 minutes
 function startKeepAlive() {
   setInterval(() => {
     https.get(RENDER_URL + '/status', res => { res.resume(); }).on('error', () => {});
@@ -72,7 +70,8 @@ function saveAiDisabledPhones(data) {
   fs.writeFileSync('./ai-disabled.json', JSON.stringify(data, null, 2));
 }
 
-const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق.\n\n' +
+const SYSTEM_PROMPT = 'أنت ماهر البدري، صاحب ورشة معدات حريق.\n' +
+'التاريخ والوقت الحالي: ' + new Date().toLocaleString('ar-SA', { timeZone: 'Asia/Riyadh' }) + '\n\n' +
 'العنوان: شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
 '** مهم جدا: استخدم قائمة المنتجات التالية عند الرد **\n\n' +
 'قائمة المنتجات للإيجار مع الأسعار (ريال/اليوم):\n' +
@@ -314,7 +313,6 @@ async function callAIGemini(systemPrompt, history, userMsg) {
   return null;
 }
 
-// Persistent conversation memory: saved to file, survives restarts
 const HISTORY_FILE = './conversation-history.json';
 const MAX_HISTORY = 30;
 let conversationHistory = loadHistory();
@@ -351,7 +349,6 @@ function loadHistory() {
     const data = JSON.parse(fs.readFileSync(HISTORY_FILE));
     return new Map(Object.entries(data));
   } catch (e) {
-    // Try loading from env var as fallback
     try {
       const envData = process.env.HISTORY_JSON;
       if (envData) return new Map(Object.entries(JSON.parse(Buffer.from(envData, 'base64').toString())));
@@ -593,7 +590,7 @@ app.get('/enable/:num', (req, res) => {
   res.redirect('/admin');
 });
 app.get('/', (req, res) => {
-  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماher Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!wsConnected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
+  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماهر Al-Badri - Fire Safety</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!wsConnected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/order</code> <code>/orders</code></p></body></html>`);
 });
 
 async function startBridge() {
@@ -749,9 +746,7 @@ async function startBridge() {
 
       console.log('Processing from ' + sender + ' (' + from + '): "' + text.substring(0,50) + '"');
 
-      // New customer (no pushName AND no history) → send equipment list once
       const hasPushName = msg.pushName && sender !== 'Unknown' && sender.trim() !== '';
-      console.log('hasPushName=' + hasPushName + ' sender="' + sender + '" pushName="' + (msg.pushName||'') + '"');
       if (!hasPushName && history.length <= 1) {
         const eqList = 'مرحبًا بك في ورشة ماهر البدري لمعدات السلامة من الحريق\n' +
           '📍 شارع الحج، مكة المكرمة، الصنايعية الجديدة\n\n' +
@@ -783,7 +778,6 @@ async function startBridge() {
       if (family) {
         familyContext = ' [هذا من العائلة: ' + family.relationship + ' (' + family.name + '). رد طبيعي بدون تعريف بنفسك، ' + family.style + ']';
       } else {
-        // Pass customer name to AI so it addresses them by name
         familyContext = ' [اسم العميل: ' + sender + '. ناديه باسمه في الرد وقل "مرحبا ' + sender + '"]';
       }
 
@@ -792,17 +786,14 @@ async function startBridge() {
       let replyText = '';
       lastError = '';
       const h = history.slice(-10, -1);
-      // Gemini first (5 key rotation)
       replyText = await callAIGemini(SYSTEM_PROMPT, h, familyContext + '\n' + text);
       if (replyText) {
         lastBranch = 'GEMINI_OK';
       } else {
-        // Try Cloudflare Workers AI
         replyText = await callCloudflare(SYSTEM_PROMPT, h, familyContext + '\n' + text);
         if (replyText) {
           lastBranch = 'CLOUDFLARE_OK';
         } else {
-        // Try Groq once
         try {
           const msgs = [{ role: 'system', content: SYSTEM_PROMPT }];
           for (const m of h) msgs.push({ role: m.role, content: m.content || '' });
