@@ -114,6 +114,11 @@ let currentSock = null;
 let wsConnected = false;
 let msgCount = 0;
 
+// الصفحة الرئيسية اللي كانت مختفية
+app.get('/', (req, res) => {
+  res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>ماهر البدري - معدات حريق</title><style>body{font-family:sans-serif;text-align:center;padding:40px;background:#1a1a2e;color:#eee}h1{color:#e94560}.status{padding:20px;border-radius:10px;margin:20px}.connected{background:#0f3460}.disconnected{background:#16213e}img{margin:20px;border:4px solid #e94560;border-radius:10px}code{background:#333;padding:4px 8px;border-radius:4px}</style></head><body><h1>🔧 ماهر البدري - معدات حريق</h1><div class="status ${wsConnected ? 'connected' : 'disconnected'}"><h2>${wsConnected ? '✅ متصل بالواتساب' : '❌ غير متصل'}</h2><p>${wsConnected ? 'رقم: ' + currentSock?.user?.id : 'امسح QR أدناه للاتصال'}</p></div>${!wsConnected && latestQr ? `<div><p>افتح واتساب جوالك ← الأجهزة المرتبطة ← امسح QR:</p><img src="/qr" alt="QR Code"></div>` : ''}<p style="margin-top:40px;color:#888">API: <code>/status</code> <code>/send</code> <code>/admin</code></p></body></html>`);
+});
+
 app.get('/status', (req, res) => {
   res.json({ connected: wsConnected, user: currentSock?.user?.id || null });
 });
@@ -124,6 +129,7 @@ app.get('/qr', async (req, res) => {
   res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
 });
 
+// صفحة لوحة التحكم بالوقت والباركود
 app.get('/admin', (req, res) => {
   const mode = aiMode === 'ai' ? '🤖' : '🖐';
   const modeText = aiMode === 'ai' ? 'رد الذكاء' : 'رد يدوي';
