@@ -154,7 +154,7 @@ let restartTimer = null;
 app.post('/set-mode', (req, res) => { aiMode = req.body.mode; res.json({ success: true, mode: aiMode }); });
 app.post('/add-ignore', (req, res) => { const phone = req.body.phone; if(phone && !ignoredNumbers.includes(phone)){ ignoredNumbers.push(phone); saveIgnored(); } res.json({ success: true }); });
 app.post('/remove-ignore', (req, res) => { ignoredNumbers = ignoredNumbers.filter(n => n !== req.body.phone); saveIgnored(); res.json({ success: true }); });
-app.post('/add-family', (req, res) => { const { phone, name } = req.body; if(phone && name && !familyContacts.find(f=>f.phone===phone)){ familyContacts.push({phone, name, active: false}); saveFamily(); } res.json({ success: true }); }); // افتراضي موقوف
+app.post('/add-family', (req, res) => { const { phone, name } = req.body; if(phone && name && !familyContacts.find(f=>f.phone===phone)){ familyContacts.push({phone, name, active: false}); saveFamily(); } res.json({ success: true }); });
 app.post('/toggle-family', (req, res) => { const phone = req.body.phone; const f = familyContacts.find(x=>x.phone===phone); if(f) f.active = !f.active; saveFamily(); res.json({ success: true }); });
 app.post('/remove-family', (req, res) => { familyContacts = familyContacts.filter(x=>x.phone !== req.body.phone); saveFamily(); res.json({ success: true }); });
 
@@ -164,31 +164,31 @@ app.get('/', (req, res) => {
   const activeFam = familyContacts.filter(f => f.active);
   const inactiveFam = familyContacts.filter(f => !f.active);
 
-  let ignHtml = ignoredNumbers.map(n => `<li style="margin:3px; font-size:12px;">${n} <button onclick="fetch('/remove-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${n}'})}).then(()=>location.reload())" style="color:red; cursor:pointer;">حذف</button></li>`).join('');
+  let ignHtml = ignoredNumbers.map(n => `<li style="margin:5px; font-size:14px; color:#ff4d4d;">${n} <button onclick="fetch('/remove-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${n}'})}).then(()=>location.reload())" style="cursor:pointer; background:none; border:1px solid red; color:red; border-radius:3px;">حذف</button></li>`).join('');
   
-  let actHtml = activeFam.map(f => `<div style="background:#1b5e20; padding:5px; margin:5px; border-radius:5px; font-size:13px;"><b>${f.name}</b> (${f.phone}) <button onclick="fetch('/toggle-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())">إيقاف</button></div>`).join('');
-  let inactHtml = inactiveFam.map(f => `<div style="background:#b71c1c; padding:5px; margin:5px; border-radius:5px; font-size:13px;"><b>${f.name}</b> (${f.phone}) <button onclick="fetch('/toggle-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())">تشغيل</button> <button onclick="fetch('/remove-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())">حذف</button></div>`).join('');
+  let actHtml = activeFam.map(f => `<div style="background:#1b5e20; padding:10px; margin:5px; border-radius:8px; font-size:14px; border:1px solid #4CAF50;"><b>${f.name}</b><br>${f.phone}<br><button onclick="fetch('/toggle-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())" style="cursor:pointer; background:#e53935; color:white; border:none; padding:5px 10px; border-radius:5px; margin-top:5px;">إيقاف</button></div>`).join('');
+  let inactHtml = inactiveFam.map(f => `<div style="background:#b71c1c; padding:10px; margin:5px; border-radius:8px; font-size:14px; border:1px solid #d32f2f;"><b>${f.name}</b><br>${f.phone}<br><button onclick="fetch('/toggle-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())" style="cursor:pointer; background:#4CAF50; color:white; border:none; padding:5px 10px; border-radius:5px; margin-top:5px; margin-left:5px;">تشغيل</button><button onclick="fetch('/remove-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())" style="cursor:pointer; background:none; border:1px solid white; color:white; padding:5px 10px; border-radius:5px; margin-top:5px;">حذف</button></div>`).join('');
 
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title></head>
-  <body style="background:#1a1a2e;color:#eee;text-align:center;font-family:sans-serif;">
+  <body style="background:#1a1a2e;color:#eee;text-align:center;font-family:sans-serif; padding-bottom:50px;">
   <h1>بوت ماهر البدري</h1>
-  <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode: '${aiMode === 'ai' ? 'manual' : 'ai'}'})}).then(()=>location.reload())" style="padding:15px; background:${aiMode === 'ai' ? 'green' : 'red'}; color:white; border:none; border-radius:10px; cursor:pointer;">الوضع: ${aiMode === 'ai' ? '🤖 تلقائي' : '✋ يدوي'}</button>
+  <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode: '${aiMode === 'ai' ? 'manual' : 'ai'}'})}).then(()=>location.reload())" style="padding:15px; background:${aiMode === 'ai' ? 'green' : 'red'}; color:white; border:none; border-radius:10px; cursor:pointer; font-size:18px;">الوضع: ${aiMode === 'ai' ? '🤖 تلقائي' : '✋ يدوي'}</button>
   
-  <div style="margin-top:20px;">
-    <h3>إضافة رقم للعائلة:</h3>
-    <input id="fName" placeholder="الاسم" style="padding:5px;">
-    <input id="fPhone" placeholder="الرقم" style="padding:5px;">
-    <button onclick="fetch('/add-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:document.getElementById('fName').value, phone:document.getElementById('fPhone').value})}).then(()=>location.reload())" style="padding:5px; cursor:pointer;">إضافة</button>
+  <div style="margin:20px; padding:15px; background:#252545; border-radius:10px;">
+    <h3>إضافة رقم جديد للعائلة:</h3>
+    <input id="fName" placeholder="الاسم" style="padding:10px; width:120px; border-radius:5px; border:none;">
+    <input id="fPhone" placeholder="رقم الهاتف" style="padding:10px; width:150px; border-radius:5px; border:none;">
+    <button onclick="fetch('/add-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:document.getElementById('fName').value, phone:document.getElementById('fPhone').value})}).then(()=>location.reload())" style="padding:10px; cursor:pointer; background:#007bff; color:white; border:none; border-radius:5px;">إضافة</button>
   </div>
 
   <div style="display:flex; justify-content:center; gap:20px; margin-top:20px; flex-wrap:wrap;">
-    <div style="width:45%; min-width:300px;"><h3>موقوف (شمال)</h3>${inactHtml}</div>
-    <div style="width:45%; min-width:300px;"><h3>شغال (يمين)</h3>${actHtml}</div>
+    <div style="width:45%; min-width:300px; background:#161625; padding:10px; border-radius:10px;"><h3>الموقوفين 🛑</h3>${inactHtml}</div>
+    <div style="width:45%; min-width:300px; background:#161625; padding:10px; border-radius:10px;"><h3>المفعلين ✅</h3>${actHtml}</div>
   </div>
 
   <div style="margin-top:40px; border-top:1px solid #444; padding-top:20px;">
     <h3>قائمة التجاهل:</h3>
-    <input id="iPhone" placeholder="الرقم" style="padding:5px;"><button onclick="fetch('/add-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:document.getElementById('iPhone').value})}).then(()=>location.reload())" style="padding:5px; cursor:pointer;">إضافة</button>
+    <input id="iPhone" placeholder="الرقم" style="padding:8px;"><button onclick="fetch('/add-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:document.getElementById('iPhone').value})}).then(()=>location.reload())" style="padding:8px; cursor:pointer;">إضافة</button>
     <ul style="list-style:none; padding:0;">${ignHtml}</ul>
   </div>
   </body></html>`);
