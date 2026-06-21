@@ -171,7 +171,12 @@ app.get('/', (req, res) => {
 
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title></head>
   <body style="background:#1a1a2e;color:#eee;text-align:center;font-family:sans-serif; padding-bottom:50px;">
+  
   <h1>بوت ماهر البدري</h1>
+  <h2>الحالة: ${wsConnected ? '✅ متصل' : '❌ غير متصل'}</h2>
+  
+  ${!wsConnected && latestQr ? `<img src="/qr" style="border:4px solid #e94560;border-radius:10px; margin:10px; width:300px;">` : ''}
+
   <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode: '${aiMode === 'ai' ? 'manual' : 'ai'}'})}).then(()=>location.reload())" style="padding:15px; background:${aiMode === 'ai' ? 'green' : 'red'}; color:white; border:none; border-radius:10px; cursor:pointer; font-size:18px;">الوضع: ${aiMode === 'ai' ? '🤖 تلقائي' : '✋ يدوي'}</button>
   
   <div style="margin:20px; padding:15px; background:#252545; border-radius:10px;">
