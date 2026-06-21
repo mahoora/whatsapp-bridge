@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
 const QRCode = require('qrcode');
@@ -9,12 +9,7 @@ const path = require('path');
 const FormData = require('form-data');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
-const IGNORED_FILE = './ai-disabled.json';
 const FAMILY_FILE = './family-contacts.json';
-
-let ignoredNumbers = [];
-try { if (fs.existsSync(IGNORED_FILE)) ignoredNumbers = JSON.parse(fs.readFileSync(IGNORED_FILE)); } catch(e) {}
-function saveIgnored() { fs.writeFileSync(IGNORED_FILE, JSON.stringify(ignoredNumbers)); }
 
 let familyContacts = [];
 try { if (fs.existsSync(FAMILY_FILE)) familyContacts = JSON.parse(fs.readFileSync(FAMILY_FILE)); } catch(e) {}
@@ -29,6 +24,14 @@ function startKeepAlive() {
 const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
 let latestQr = null;
+let wsConnected = false;
+let aiMode = 'ai';
+
+// دالة لتنظيف الرقم للمطابقة (بتاخد آخر 9 أرقام عشان نتفادى الـ 966 و الـ 0)
+function cleanPhone(phone) {
+    let p = phone.replace(/[^0-9]/g, '');
+    return p.slice(-9); 
+}
 
 function loadCreds() {
   const v = process.env.CREDS_JSON;
@@ -61,25 +64,7 @@ function saveCredsToEnv() {
 loadCreds();
 
 function getSystemPrompt() {
-  const now = new Date();
-  const time = now.toLocaleString('ar-SA', { timeZone: 'Asia/Riyadh', hour: '2-digit', minute: '2-digit' });
-  const date = now.toLocaleDateString('ar-SA', { timeZone: 'Asia/Riyadh' });
-
-  return 'أنت ماهر البدري، صاحب ورشة معدات حريق.\n' +
-  'التاريخ والوقت الحالي في مكة المكرمة: ' + date + ' الساعة ' + time + '\n\n' +
-  'العنوان: شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
-  'قائمة المنتجات للإيجار مع الأسعار (ريال/اليوم):\n' +
-  '1. ماكينة سن 2 بوصة ← 100 ريال/اليوم\n' +
-  '2. ماكينة سن 3 بوصة ← 120 ريال/اليوم\n' +
-  '3. مكنة جروف ← 80 ريال/اليوم\n' +
-  '4. خواشة مواسير ← 50 ريال/اليوم\n' +
-  '5. مكنة باركود HDP ← 200 ريال/اليوم\n' +
-  '6. مكنة ضغط مياه (كهرباء) ← 50 ريال/اليوم\n' +
-  '7. مكنة ضغط مياه (ديزل) ← 70 ريال/اليوم\n' +
-  '8. مكنة HDP راس في راس ← 200 ريال/اليوم\n' +
-  '9. مولد كهرباء 3 كيلو ← 100 ريال/اليوم\n' +
-  '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال/اليوم\n\n' +
-  'تعليمات الرد: عامية مصرية، قصيرة، ومباشرة. رحب بالعميل باسمه.';
+  return 'أنت ماهر البدري، صاحب ورشة معدات حريق. عامية مصرية، قصيرة، ومباشرة. رحب بالعميل باسمه.';
 }
 
 const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
@@ -125,43 +110,26 @@ async function callAIGemini(systemPrompt, history, userMsg) {
 const HISTORY_FILE = './conversation-history.json';
 const MAX_HISTORY = 30;
 let conversationHistory = loadHistory();
-let aiMode = 'ai';
-
-function transcribeAudio(audioBuffer) {
-  return new Promise((resolve, reject) => {
-    const form = new FormData();
-    form.append('file', audioBuffer, { filename: 'audio.ogg', contentType: 'audio/ogg' });
-    form.append('model', 'whisper-large-v3-turbo');
-    form.append('language', 'ar');
-    const opts = { hostname: 'api.groq.com', path: '/openai/v1/audio/transcriptions', method: 'POST', timeout: 30000, headers: form.getHeaders({ 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY }) };
-    const req = https.request(opts, res => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { const j = JSON.parse(b); resolve(j.text || ''); } catch (e) { reject(e); } }); });
-    req.on('error', reject);
-    form.pipe(req);
-  });
-}
 
 function loadHistory() { try { const data = JSON.parse(fs.readFileSync(HISTORY_FILE)); return new Map(Object.entries(data)); } catch (e) { return new Map(); } }
 function saveHistory() { const obj = {}; for (const [key, val] of conversationHistory) { obj[key] = val; } fs.writeFileSync(HISTORY_FILE, JSON.stringify(obj)); try { renderUpdateEnv('HISTORY_JSON', Buffer.from(JSON.stringify(obj)).toString('base64')); } catch (e) {} }
 
 const app = express();
 app.use(express.json());
-let currentSock = null;
-let wsConnected = false;
-let restartTimer = null;
 
 app.post('/set-mode', (req, res) => { aiMode = req.body.mode; res.json({ success: true, mode: aiMode }); });
-app.post('/add-family', (req, res) => { const { phone, name } = req.body; if(phone && name && !familyContacts.find(f=>f.phone===phone)){ familyContacts.push({phone, name, active: true}); saveFamily(); } res.json({ success: true }); });
+app.post('/add-family', (req, res) => { const { phone, name } = req.body; if(phone && name && !familyContacts.find(f=>cleanPhone(f.phone)===cleanPhone(phone))){ familyContacts.push({phone, name, active: true}); saveFamily(); } res.json({ success: true }); });
 app.post('/toggle-family', (req, res) => { 
     const phone = req.body.phone; 
-    const f = familyContacts.find(x => x.phone === phone); 
+    const f = familyContacts.find(x => cleanPhone(x.phone) === cleanPhone(phone)); 
     if(f) { 
         f.active = !f.active; 
         saveFamily(); 
-        console.log(`[Status Change] ${f.name} is now ${f.active ? 'Active' : 'Inactive'}`);
+        console.log(`[Status] ${f.name} (Phone: ${f.phone}) is now ${f.active ? 'Active' : 'Inactive'}`);
     } 
     res.json({ success: true }); 
 });
-app.post('/remove-family', (req, res) => { familyContacts = familyContacts.filter(x=>x.phone !== req.body.phone); saveFamily(); res.json({ success: true }); });
+app.post('/remove-family', (req, res) => { familyContacts = familyContacts.filter(x=>cleanPhone(x.phone) !== cleanPhone(req.body.phone)); saveFamily(); res.json({ success: true }); });
 
 app.get('/status', (req, res) => { res.json({ connected: wsConnected, mode: aiMode }); });
 
@@ -175,23 +143,17 @@ app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title></head>
   <body style="background:#1a1a2e;color:#eee;text-align:center;font-family:sans-serif; padding:5px;">
   <h1 style="font-size:18px;">بوت ماهر البدري</h1>
-  
-  <div style="margin:10px; font-size:16px;">
-    الحالة: ${wsConnected ? '<span style="color:#00e676; font-weight:bold;">✅ متصل</span>' : '<span style="color:#ff5252; font-weight:bold;">❌ غير متصل</span>'}
-  </div>
+  <div style="margin:10px; font-size:16px;">الحالة: ${wsConnected ? '<span style="color:#00e676; font-weight:bold;">✅ متصل</span>' : '<span style="color:#ff5252; font-weight:bold;">❌ غير متصل</span>'}</div>
   ${!wsConnected ? '<img src="/qr" style="width:200px; border:3px solid #fff; border-radius:10px; margin-bottom:10px;">' : ''}
-
   <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode: '${aiMode === 'ai' ? 'manual' : 'ai'}'})}).then(()=>location.reload())" style="padding:5px; background:${aiMode === 'ai' ? 'green' : 'red'}; color:white; border:none; border-radius:4px; cursor:pointer; font-size:12px;">الوضع: ${aiMode === 'ai' ? '🤖 تلقائي' : '✋ يدوي'}</button>
-  
   <div style="margin:10px; padding:5px; background:#252545; border-radius:5px;">
     <input id="fName" placeholder="الاسم" style="padding:2px; width:70px; font-size:12px;">
     <input id="fPhone" placeholder="الرقم" style="padding:2px; width:100px; font-size:12px;">
     <button onclick="fetch('/add-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:document.getElementById('fName').value, phone:document.getElementById('fPhone').value})}).then(()=>location.reload())" style="padding:2px 10px; cursor:pointer; background:#007bff; color:white; border:none; border-radius:3px; font-size:12px;">إضافة</button>
   </div>
-
-  <div style="display:flex; justify-content:center; gap:5px; flex-wrap:wrap;">
-    <div style="width:48%; background:#161625; padding:5px; border-radius:5px;"><h3 style="font-size:14px; margin:5px;">✅ شغال</h3>${actHtml}</div>
-    <div style="width:48%; background:#161625; padding:5px; border-radius:5px;"><h3 style="font-size:14px; margin:5px;">🛑 موقوف</h3>${inactHtml}</div>
+  <div style="display:flex; justify-content:center; gap:20px; flex-wrap:wrap;">
+    <div style="width:45%; background:#161625; padding:5px; border-radius:5px;"><h3 style="font-size:14px; margin:5px;">✅ شغال</h3>${actHtml}</div>
+    <div style="width:45%; background:#161625; padding:5px; border-radius:5px;"><h3 style="font-size:14px; margin:5px;">🛑 موقوف</h3>${inactHtml}</div>
   </div>
   </body></html>`);
 });
@@ -201,53 +163,36 @@ app.get('/qr', async (req, res) => { if (!latestQr) return res.status(404).send(
 async function startBridge() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const sock = makeWASocket({ printQRInTerminal: true, auth: state, logger: pino({ level: 'silent' }), browser: ['Chrome', 'Desktop', '1.0'], markOnlineOnConnect: false });
-  currentSock = sock;
   sock.ev.on('creds.update', () => { saveCreds(); saveCredsToEnv(); });
-  sock.ev.on('connection.update', ({ connection, qr }) => { if (qr) latestQr = qr; if (connection === 'open') wsConnected = true; if (connection === 'close') { wsConnected = false; if (!restartTimer) restartTimer = setTimeout(() => { restartTimer = null; startBridge(); }, 5000); } });
+  sock.ev.on('connection.update', ({ connection, qr }) => { 
+      if (qr) latestQr = qr; 
+      if (connection === 'open') wsConnected = true; 
+      if (connection === 'close') { wsConnected = false; setTimeout(startBridge, 5000); } 
+  });
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
     try {
       for (const msg of messages) {
         if (!msg.key || msg.key.fromMe) continue;
         const jid = msg.key.remoteJid;
-        if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
-
-        const senderPhone = jid.split('@')[0].replace(/[^0-9]/g, '');
-        // التأكد من استدعاء مصفوفة جهات الاتصال المحدثة
-        const family = familyContacts.find(f => f.phone === senderPhone);
+        const senderPhoneRaw = jid.split('@')[0];
+        const cleanSender = cleanPhone(senderPhoneRaw);
         
-        // --- المنطق الصارم للإيقاف ---
+        // --- لوج عشان تتابع في السيرفر هو بيقرأ إيه ---
+        console.log(`[Incoming] Sender: ${senderPhoneRaw} (Clean: ${cleanSender})`);
+
+        // التحقق من قائمة العائلة باستخدام المطابقة المرنة
+        const family = familyContacts.find(f => cleanPhone(f.phone) === cleanSender);
         if (family && family.active === false) {
-             console.log(`[Bot Ignored] Blocked contact: ${senderPhone}`);
-             continue; 
+             console.log(`[Blocked] ${family.name} is inactive.`);
+             continue;
         }
-        // ------------------------------
 
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || '';
-        
-        if (msg.message?.audioMessage && !text) {
-          try { const buffer = await downloadMediaMessage(msg, 'buffer', {}); text = await transcribeAudio(buffer); } catch (e) { continue; }
+        if (text) {
+             let replyText = await callAIGemini(getSystemPrompt(), [], text);
+             await sock.sendMessage(jid, { text: replyText });
         }
-        if (!text) continue;
-
-        const tlow = text.trim();
-        if (tlow === 'يدوي') { aiMode = 'manual'; await sock.sendMessage(jid, { text: '✅ تم التحويل للرد اليدوي.' }); continue; }
-        if (tlow === 'تلقائي') { aiMode = 'ai'; await sock.sendMessage(jid, { text: '✅ تم التحويل للتلقائي.' }); continue; }
-        if (aiMode === 'manual') continue;
-
-        if (!conversationHistory.has(jid)) conversationHistory.set(jid, []);
-        const history = conversationHistory.get(jid);
-        history.push({ role: 'user', content: text });
-        if (history.length > MAX_HISTORY) history.shift();
-        
-        let familyContext = family ? ` [هذا الرقم من العائلة: ${family.name}]` : '';
-        let replyText = await callAIGemini(getSystemPrompt(), history.slice(-10), familyContext + '\n' + text);
-        if (!replyText) replyText = await callCloudflare(getSystemPrompt(), history.slice(-10), familyContext + '\n' + text);
-
-        if (!replyText) replyText = 'آسف، كلمني على الخاص.';
-        await sock.sendMessage(jid, { text: replyText });
-        history.push({ role: 'assistant', content: replyText });
-        saveHistory();
       }
     } catch(e) { console.error(e); }
   });
