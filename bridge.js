@@ -629,7 +629,7 @@ async function startBridge() {
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
     try { 
-      await new Promise(r => setTimeout(r, 2000)); 
+      await new Promise(r => setTimeout(r, 4000)); 
       for (const msg of messages) {
       if (!msg.key || msg.key.fromMe) continue;
       const jid = msg.key.remoteJid;
@@ -722,11 +722,11 @@ async function startBridge() {
             saveAiDisabledPhones(aiDisabledPhones);
           }
           await sock.sendPresenceUpdate('composing', sendTo);
-          await new Promise(r => setTimeout(r, 8000));
+          await new Promise(r => setTimeout(r, 4000));
           await sock.sendMessage(sendTo, { text: '✅ تم إيقاف الزكاء عن الرقم ' + num + '. أنت هترد عليه.' });
         } else {
           await sock.sendPresenceUpdate('composing', sendTo);
-          await new Promise(r => setTimeout(r, 8000));
+          await new Promise(r => setTimeout(r, 4000));
           await sock.sendMessage(sendTo, { text: 'أكتب الرقم كامل، مثال:\nالغاء 201093122475' });
         }
         lastReply = 'DISABLE: ' + num;
@@ -833,7 +833,7 @@ async function startBridge() {
       if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
       lastReply = replyText.substring(0, 100);
      await sock.sendPresenceUpdate('composing', sendTo);
-await new Promise(r => setTimeout(r, 8000));
+await new Promise(r => setTimeout(r, 4000));
 await sock.readMessages([msg.key]).catch(() => {});
 await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
       history.push({ role: 'assistant', content: replyText });
