@@ -160,13 +160,18 @@ app.get('/', (req, res) => {
   const activeFam = familyContacts.filter(f => f.active);
   const inactiveFam = familyContacts.filter(f => !f.active);
 
-  // تم تصغير العرض إلى 150px وتقليل الخطوط لتكفي أكبر عدد
   let actHtml = activeFam.map(f => `<div style="background:#1b5e20; padding:3px; margin:2px; border-radius:4px; font-size:10px; border:1px solid #4CAF50; display:inline-block; width:150px; text-align:center;"><b>${f.name}</b><br>${f.phone}<br><button onclick="fetch('/toggle-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())" style="cursor:pointer; background:#e53935; color:white; border:none; padding:1px 5px; border-radius:3px; margin-top:2px; font-size:9px;">إيقاف</button></div>`).join('');
   let inactHtml = inactiveFam.map(f => `<div style="background:#b71c1c; padding:3px; margin:2px; border-radius:4px; font-size:10px; border:1px solid #d32f2f; display:inline-block; width:150px; text-align:center;"><b>${f.name}</b><br>${f.phone}<br><button onclick="fetch('/toggle-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())" style="cursor:pointer; background:#4CAF50; color:white; border:none; padding:1px 5px; border-radius:3px; margin-top:2px; font-size:9px;">تشغيل</button><button onclick="fetch('/remove-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())" style="cursor:pointer; background:none; border:1px solid white; color:white; padding:1px 5px; border-radius:3px; margin-top:2px; font-size:9px; margin-right:3px;">حذف</button></div>`).join('');
 
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title></head>
   <body style="background:#1a1a2e;color:#eee;text-align:center;font-family:sans-serif; padding:5px;">
   <h1 style="font-size:18px;">بوت ماهر البدري</h1>
+  
+  <div style="margin:10px; font-size:16px;">
+    الحالة: ${wsConnected ? '<span style="color:#00e676; font-weight:bold;">✅ متصل</span>' : '<span style="color:#ff5252; font-weight:bold;">❌ غير متصل</span>'}
+  </div>
+  ${!wsConnected ? '<img src="/qr" style="width:200px; border:3px solid #fff; border-radius:10px; margin-bottom:10px;">' : ''}
+
   <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode: '${aiMode === 'ai' ? 'manual' : 'ai'}'})}).then(()=>location.reload())" style="padding:5px; background:${aiMode === 'ai' ? 'green' : 'red'}; color:white; border:none; border-radius:4px; cursor:pointer; font-size:12px;">الوضع: ${aiMode === 'ai' ? '🤖 تلقائي' : '✋ يدوي'}</button>
   
   <div style="margin:10px; padding:5px; background:#252545; border-radius:5px;">
