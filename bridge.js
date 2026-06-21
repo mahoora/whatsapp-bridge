@@ -245,7 +245,6 @@ app.get('/qr', async (req, res) => {
   res.send(await QRCode.toBuffer(latestQr, { type: 'png', width: 400 }));
 });
 
-// باقي دوال التحكم والأوامر (Orders, Family, etc.) تظل كما هي
 app.get('/admin', (req, res) => {
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title></head><body style="background:#1a1a2e; color:white; text-align:center;"><h2>🔧 تحكم البوت: ${wsConnected ? 'متصل ✅' : 'غير متصل ❌'}</h2><br><a href="/admin" style="color:yellow;">تحديث</a></body></html>`);
 });
@@ -262,7 +261,7 @@ async function startBridge() {
     auth: state,
     logger: pino({ level: 'silent' }),
     browser: ['Chrome', 'Chrome', '120.0'],
-    markOnlineOnConnect: false // التعديل الأول: يمنع البوت يكون أونلاين دايماً عشان الموبايل يرن
+    markOnlineOnConnect: false
   });
   currentSock = sock;
 
@@ -281,7 +280,7 @@ async function startBridge() {
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
     try { 
-      await new Promise(r => setTimeout(r, 4000)); 
+      // محذوف تأخير الوقت عشان الرسالة توصل أسرع والموبايل يرن
       for (const msg of messages) {
       if (!msg.key || msg.key.fromMe) continue;
       const jid = msg.key.remoteJid;
@@ -296,9 +295,7 @@ async function startBridge() {
       if (aiDisabledPhones.some(p => senderPhone.includes(p) || from.includes(p))) continue;
 
       const audioMsg = msg.message?.audioMessage;
-      let isVoice = false;
       if (audioMsg && !text) {
-        isVoice = true;
         try {
           const buffer = await downloadMediaMessage(msg, 'buffer', {});
           text = await transcribeAudio(buffer);
@@ -382,10 +379,7 @@ async function startBridge() {
 
       if (!replyText) replyText = 'آسف، حصل مشكلة فنية. كلم المهندس ماهر البدري على الخاص.';
 
-      await sock.sendPresenceUpdate('composing', sendTo);
-      await new Promise(r => setTimeout(r, 4000));
-      
-      // التعديل التاني: تم حذف السطر اللي كان بيقرا الرسايل أوتوماتيك (sock.readMessages) عشان يجيلك الإشعار على الموبايل
+      // تم حذف كل أكواد الـ (composing) اللي كانت بتخلي الواتساب يمنع الإشعار
 
       await sock.sendMessage(sendTo, { text: replyText }).catch(() => {});
       history.push({ role: 'assistant', content: replyText });
