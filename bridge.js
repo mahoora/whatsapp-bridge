@@ -784,10 +784,10 @@ async function startBridge() {
         familyContext = ' [هذا من العائلة: ' + family.relationship + ' (' + family.name + '). رد طبيعي بدون تعريف بنفسك، ' + family.style + ']';
       } else {
         // Pass customer name to AI so it addresses them by name
-        familyContext = ' [اسم العميل: ' + sender + '. ناديه باسمه مره واحده في الرد وقل "مرحبا ' + sender + '"]';
+        familyContext = ' [اسم العميل: ' + sender + '. ناديه باسمه مره واحده في اول رد وقل "مرحبا ' + sender + '"]';
       }
 
-            const opts = { timeZone: 'Asia/Riyadh', hour12: true, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' };
+     const opts = { timeZone: 'Asia/Riyadh', hour12: true, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' };
       const saudiTime = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura', opts).format(new Date());
       const saudiGregorian = new Intl.DateTimeFormat('ar-EG', { ...opts, calendar: 'gregorian' }).format(new Date());
       familyContext += ` [الوقت والتاريخ الحالي في السعودية: الهجري: ${saudiTime} | الميلادي: ${saudiGregorian}]`;
