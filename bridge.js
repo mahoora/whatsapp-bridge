@@ -154,35 +154,43 @@ let restartTimer = null;
 app.post('/set-mode', (req, res) => { aiMode = req.body.mode; res.json({ success: true, mode: aiMode }); });
 app.post('/add-ignore', (req, res) => { const phone = req.body.phone; if(phone && !ignoredNumbers.includes(phone)){ ignoredNumbers.push(phone); saveIgnored(); } res.json({ success: true }); });
 app.post('/remove-ignore', (req, res) => { ignoredNumbers = ignoredNumbers.filter(n => n !== req.body.phone); saveIgnored(); res.json({ success: true }); });
-app.post('/add-family', (req, res) => { const phone = req.body.phone; if(phone && !familyContacts.find(f=>f.phone===phone)){ familyContacts.push({phone, active: true}); saveFamily(); } res.json({ success: true }); });
+app.post('/add-family', (req, res) => { const { phone, name } = req.body; if(phone && name && !familyContacts.find(f=>f.phone===phone)){ familyContacts.push({phone, name, active: false}); saveFamily(); } res.json({ success: true }); }); // افتراضي موقوف
 app.post('/toggle-family', (req, res) => { const phone = req.body.phone; const f = familyContacts.find(x=>x.phone===phone); if(f) f.active = !f.active; saveFamily(); res.json({ success: true }); });
 app.post('/remove-family', (req, res) => { familyContacts = familyContacts.filter(x=>x.phone !== req.body.phone); saveFamily(); res.json({ success: true }); });
 
 app.get('/status', (req, res) => { res.json({ connected: wsConnected, mode: aiMode }); });
 
 app.get('/', (req, res) => {
-  let ignHtml = ignoredNumbers.map(n => `<li style="margin:5px; background:#2c2c54; padding:5px; border-radius:5px;">${n} <button onclick="fetch('/remove-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${n}'})}).then(()=>location.reload())" style="color:red;">حذف</button></li>`).join('');
-  let famHtml = familyContacts.map(f => `<li style="margin:5px; background:${f.active?'#1b5e20':'#b71c1c'}; padding:5px; border-radius:5px;">${f.phone} - <b>${f.active?'شغال':'موقوف'}</b> <button onclick="fetch('/toggle-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())">${f.active?'إيقاف':'تشغيل'}</button> <button onclick="fetch('/remove-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())">حذف</button></li>`).join('');
+  const activeFam = familyContacts.filter(f => f.active);
+  const inactiveFam = familyContacts.filter(f => !f.active);
+
+  let ignHtml = ignoredNumbers.map(n => `<li style="margin:3px; font-size:12px;">${n} <button onclick="fetch('/remove-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${n}'})}).then(()=>location.reload())" style="color:red; cursor:pointer;">حذف</button></li>`).join('');
+  
+  let actHtml = activeFam.map(f => `<div style="background:#1b5e20; padding:5px; margin:5px; border-radius:5px; font-size:13px;"><b>${f.name}</b> (${f.phone}) <button onclick="fetch('/toggle-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())">إيقاف</button></div>`).join('');
+  let inactHtml = inactiveFam.map(f => `<div style="background:#b71c1c; padding:5px; margin:5px; border-radius:5px; font-size:13px;"><b>${f.name}</b> (${f.phone}) <button onclick="fetch('/toggle-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())">تشغيل</button> <button onclick="fetch('/remove-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())">حذف</button></div>`).join('');
 
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title></head>
   <body style="background:#1a1a2e;color:#eee;text-align:center;font-family:sans-serif;">
   <h1>بوت ماهر البدري</h1>
-  <h2>الحالة: ${wsConnected ? '✅ متصل' : '❌ غير متصل'}</h2>
-  <h3>الوضع الحالي: ${aiMode === 'ai' ? '🤖 تلقائي' : '✋ يدوي'}</h3>
-  <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'ai'})}).then(()=>location.reload())" style="padding:15px; margin:5px; background:green; color:white; border:none; border-radius:10px;">تشغيل التلقائي</button>
-  <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'manual'})}).then(()=>location.reload())" style="padding:15px; margin:5px; background:red; color:white; border:none; border-radius:10px;">إيقاف (يدوي)</button>
+  <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode: '${aiMode === 'ai' ? 'manual' : 'ai'}'})}).then(()=>location.reload())" style="padding:15px; background:${aiMode === 'ai' ? 'green' : 'red'}; color:white; border:none; border-radius:10px; cursor:pointer;">الوضع: ${aiMode === 'ai' ? '🤖 تلقائي' : '✋ يدوي'}</button>
   
   <div style="margin-top:20px;">
-    <h3>أرقام العائلة (تحكم فردي):</h3>
-    <input id="fPhone" placeholder="أدخل الرقم" style="padding:10px;"><button onclick="fetch('/add-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:document.getElementById('fPhone').value})}).then(()=>location.reload())" style="padding:10px;">إضافة</button>
-    <ul style="list-style:none; padding:0; width:300px; margin:10px auto;">${famHtml}</ul>
+    <h3>إضافة رقم للعائلة:</h3>
+    <input id="fName" placeholder="الاسم" style="padding:5px;">
+    <input id="fPhone" placeholder="الرقم" style="padding:5px;">
+    <button onclick="fetch('/add-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:document.getElementById('fName').value, phone:document.getElementById('fPhone').value})}).then(()=>location.reload())" style="padding:5px; cursor:pointer;">إضافة</button>
   </div>
-  <div style="margin-top:20px;">
+
+  <div style="display:flex; justify-content:center; gap:20px; margin-top:20px; flex-wrap:wrap;">
+    <div style="width:45%; min-width:300px;"><h3>موقوف (شمال)</h3>${inactHtml}</div>
+    <div style="width:45%; min-width:300px;"><h3>شغال (يمين)</h3>${actHtml}</div>
+  </div>
+
+  <div style="margin-top:40px; border-top:1px solid #444; padding-top:20px;">
     <h3>قائمة التجاهل:</h3>
-    <input id="iPhone" placeholder="أدخل الرقم" style="padding:10px;"><button onclick="fetch('/add-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:document.getElementById('iPhone').value})}).then(()=>location.reload())" style="padding:10px;">إضافة</button>
-    <ul style="list-style:none; padding:0; width:300px; margin:10px auto;">${ignHtml}</ul>
+    <input id="iPhone" placeholder="الرقم" style="padding:5px;"><button onclick="fetch('/add-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:document.getElementById('iPhone').value})}).then(()=>location.reload())" style="padding:5px; cursor:pointer;">إضافة</button>
+    <ul style="list-style:none; padding:0;">${ignHtml}</ul>
   </div>
-  ${!wsConnected && latestQr ? `<img src="/qr" style="border:4px solid #e94560;border-radius:10px; margin:10px;">` : ''}
   </body></html>`);
 });
 
@@ -224,7 +232,7 @@ async function startBridge() {
         history.push({ role: 'user', content: text });
         if (history.length > MAX_HISTORY) history.shift();
         
-        let familyContext = family ? ` [هذا الرقم من العائلة]` : '';
+        let familyContext = family ? ` [هذا الرقم من العائلة: ${family.name}]` : '';
         let replyText = await callAIGemini(getSystemPrompt(), history.slice(-10), familyContext + '\n' + text);
         if (!replyText) replyText = await callCloudflare(getSystemPrompt(), history.slice(-10), familyContext + '\n' + text);
 
