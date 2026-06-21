@@ -10,12 +10,16 @@ const FormData = require('form-data');
 const { exec } = require('child_process');
 
 const RENDER_URL = 'https://whatsapp-bridge-8lq2.onrender.com';
-const IGNORED_FILE = './ai-disabled.json'; // ملف حفظ الأرقام المستثناة
+const IGNORED_FILE = './ai-disabled.json';
+const FAMILY_FILE = './family-contacts.json';
 
-// تحميل الأرقام المستثناة
 let ignoredNumbers = [];
 try { if (fs.existsSync(IGNORED_FILE)) ignoredNumbers = JSON.parse(fs.readFileSync(IGNORED_FILE)); } catch(e) {}
 function saveIgnored() { fs.writeFileSync(IGNORED_FILE, JSON.stringify(ignoredNumbers)); }
+
+let familyContacts = [];
+try { if (fs.existsSync(FAMILY_FILE)) familyContacts = JSON.parse(fs.readFileSync(FAMILY_FILE)); } catch(e) {}
+function saveFamily() { fs.writeFileSync(FAMILY_FILE, JSON.stringify(familyContacts)); }
 
 function startKeepAlive() {
   setInterval(() => {
@@ -25,7 +29,6 @@ function startKeepAlive() {
 }
 const BRIDGE_PORT = process.env.PORT || process.env.BRIDGE_PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || './auth_info';
-const ADMIN_JID = process.env.ADMIN_JID || '966595510125@s.whatsapp.net';
 let latestQr = null;
 
 function loadCreds() {
@@ -58,15 +61,6 @@ function saveCredsToEnv() {
 
 loadCreds();
 
-function loadFamilyContacts() {
-  try { return JSON.parse(fs.readFileSync('./family-contacts.json')); }
-  catch(e) { return []; }
-}
-function loadAiDisabledPhones() {
-  try { return JSON.parse(fs.readFileSync('./ai-disabled.json')); }
-  catch(e) { return []; }
-}
-
 function getSystemPrompt() {
   const now = new Date();
   const time = now.toLocaleString('ar-SA', { timeZone: 'Asia/Riyadh', hour: '2-digit', minute: '2-digit' });
@@ -75,7 +69,6 @@ function getSystemPrompt() {
   return 'أنت ماهر البدري، صاحب ورشة معدات حريق.\n' +
   'التاريخ والوقت الحالي في مكة المكرمة: ' + date + ' الساعة ' + time + '\n\n' +
   'العنوان: شارع الحج، مكة المكرمة، الصنايعية الجديدة، بجوار مركز تقدير للسيارات\n\n' +
-  '** مهم جدا: استخدم قائمة المنتجات التالية عند الرد **\n\n' +
   'قائمة المنتجات للإيجار مع الأسعار (ريال/اليوم):\n' +
   '1. ماكينة سن 2 بوصة ← 100 ريال/اليوم\n' +
   '2. ماكينة سن 3 بوصة ← 120 ريال/اليوم\n' +
@@ -87,22 +80,7 @@ function getSystemPrompt() {
   '8. مكنة HDP راس في راس ← 200 ريال/اليوم\n' +
   '9. مولد كهرباء 3 كيلو ← 100 ريال/اليوم\n' +
   '10. مقص 8 بوصة لقص المواسير الحديد ← 100 ريال/اليوم\n\n' +
-  '** تعليمات الرد **\n' +
-  '- عندك معرفة عامة وشاملة في كل المجالات: دين، تاريخ، سياسة، علوم، رياضة، ثقافة، تكنولوجيا، طبخ، صحة، أي حاجة. تقدر ترد على أي سؤال من أي مجال.\n' +
-  '- لو حد سلم عليك (السلام عليكم، هلا، مرحبا): رد التحية بأحسن منها وقل "وعليكم السلام ورحمة الله وبركاته" وبعدين رحب بالعميل وقلبه تحت أمرك.\n' +
-  '- للعائلة: رد بنفس لهجة اللي كلمك\n' +
-  '- العربية الفصحى ممنوع. رد بالعامية فقط\n' +
-  '- **العملاء (غير العائلة): ناديهم باسمهم اللي جايزلك (مثلاً "مرحبا أحمد"). استخدم اسم العميل في أول رد.**\n' +
-  '- **العملاء (غير العائلة): رد باللهجة المصرية فقط**\n' +
-  '- إذا سأل عن منتج: قول اسمه وسعره من القائمة\n' +
-  '- إذا سأل عن الإيجار: قول سعر اليوم\n' +
-  '- تصليح أو قطع غيار: "موجود كل حاجة إن شاء الله، جيبها الورشة للمهندس ماهر"\n' +
-  '- إذا طلب طلب: اسأله عن اسمه فقط وشو يبي بالضبط\n' +
-  '- ردودك قصيرة قد السؤال.\n' +
-  '- عربي فقط.\n' +
-  '** قسم الأسنان **: "طقم الأسنان موجود ومتوفر للبيع ومتاح في الورشة علطول يا فندم، تنورنا في أي وقت!"\n' +
-  '** قسم بيع مواد السباكة: ** موجود متوفر عندنا مواد السباكة الحديد والبلاستيك يا فندم، ابعت لنا الكشف أو الطلبات اللي محتاجها بالكميات، وأنا هسعر هولك وأبعتهولك علطول! (كلم أحمد: +96659383768)\n' +
-  '** قسم الصيانة: ** "أه قطع الغيار موجودة والصيانة متوفرة إن شاء الله، جيبها هنا الورشة للمهندس ماهر عشان يعملها لك وينظر فيها بنفسه."';
+  'تعليمات الرد: عامية مصرية، قصيرة، ومباشرة. رحب بالعميل باسمه.';
 }
 
 const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
@@ -116,15 +94,11 @@ async function callCloudflare(systemPrompt, history, userMsg) {
   for (const m of history) msgs.push({ role: m.role, content: m.content || '' });
   msgs.push({ role: 'user', content: userMsg });
   try {
-    const c = new AbortController();
-    const t = setTimeout(() => c.abort(), 30000);
     const r = await fetch('https://api.cloudflare.com/client/v4/accounts/' + CF_ACCOUNT_ID + '/ai/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + CF_API_TOKEN, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', messages: msgs, temperature: 0.7, max_tokens: 1024 }),
-      signal: c.signal
+      body: JSON.stringify({ model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', messages: msgs, temperature: 0.7, max_tokens: 1024 })
     });
-    clearTimeout(t);
     if (r.status === 200) { const j = await r.json(); return j.choices?.[0]?.message?.content || ''; }
     return null;
   } catch (e) { return null; }
@@ -138,17 +112,13 @@ async function callAIGemini(systemPrompt, history, userMsg) {
     const contents = [];
     for (const msg of history) contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
     contents.push({ role: 'user', parts: [{ text: userMsg }] });
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
     try {
       const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } }),
-        signal: controller.signal
+        body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } })
       });
-      clearTimeout(timer);
       if (res.status === 200) { keyIndex = (idx + 1) % GEMINI_KEYS.length; const j = await res.json(); return j.candidates?.[0]?.content?.parts?.[0]?.text || ''; }
-    } catch (e) { clearTimeout(timer); }
+    } catch (e) {}
   }
   return null;
 }
@@ -156,7 +126,6 @@ async function callAIGemini(systemPrompt, history, userMsg) {
 const HISTORY_FILE = './conversation-history.json';
 const MAX_HISTORY = 30;
 let conversationHistory = loadHistory();
-let familyContacts = loadFamilyContacts();
 let aiMode = 'ai';
 
 function transcribeAudio(audioBuffer) {
@@ -181,35 +150,39 @@ let currentSock = null;
 let wsConnected = false;
 let restartTimer = null;
 
-// مسارات التحكم المضافة
+// مسارات التحكم
 app.post('/set-mode', (req, res) => { aiMode = req.body.mode; res.json({ success: true, mode: aiMode }); });
 app.post('/add-ignore', (req, res) => { const phone = req.body.phone; if(phone && !ignoredNumbers.includes(phone)){ ignoredNumbers.push(phone); saveIgnored(); } res.json({ success: true }); });
 app.post('/remove-ignore', (req, res) => { ignoredNumbers = ignoredNumbers.filter(n => n !== req.body.phone); saveIgnored(); res.json({ success: true }); });
+app.post('/add-family', (req, res) => { const phone = req.body.phone; if(phone && !familyContacts.find(f=>f.phone===phone)){ familyContacts.push({phone, active: true}); saveFamily(); } res.json({ success: true }); });
+app.post('/toggle-family', (req, res) => { const phone = req.body.phone; const f = familyContacts.find(x=>x.phone===phone); if(f) f.active = !f.active; saveFamily(); res.json({ success: true }); });
+app.post('/remove-family', (req, res) => { familyContacts = familyContacts.filter(x=>x.phone !== req.body.phone); saveFamily(); res.json({ success: true }); });
 
 app.get('/status', (req, res) => { res.json({ connected: wsConnected, mode: aiMode }); });
 
 app.get('/', (req, res) => {
-  let listHtml = ignoredNumbers.map(n => `
-    <li style="margin:5px; padding:5px; background:#2c2c54; border-radius:5px; color:white; display:flex; justify-content:space-between;">
-      ${n} <button onclick="fetch('/remove-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${n}'})}).then(()=>location.reload())" style="color:white; background:red; border:none; cursor:pointer;">حذف</button>
-    </li>`).join('');
+  let ignHtml = ignoredNumbers.map(n => `<li style="margin:5px; background:#2c2c54; padding:5px; border-radius:5px;">${n} <button onclick="fetch('/remove-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${n}'})}).then(()=>location.reload())" style="color:red;">حذف</button></li>`).join('');
+  let famHtml = familyContacts.map(f => `<li style="margin:5px; background:${f.active?'#1b5e20':'#b71c1c'}; padding:5px; border-radius:5px;">${f.phone} - <b>${f.active?'شغال':'موقوف'}</b> <button onclick="fetch('/toggle-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())">${f.active?'إيقاف':'تشغيل'}</button> <button onclick="fetch('/remove-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:'${f.phone}'})}).then(()=>location.reload())">حذف</button></li>`).join('');
 
   res.send(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تحكم البوت</title></head>
   <body style="background:#1a1a2e;color:#eee;text-align:center;font-family:sans-serif;">
   <h1>بوت ماهر البدري</h1>
   <h2>الحالة: ${wsConnected ? '✅ متصل' : '❌ غير متصل'}</h2>
   <h3>الوضع الحالي: ${aiMode === 'ai' ? '🤖 تلقائي' : '✋ يدوي'}</h3>
-  <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'ai'})}).then(()=>location.reload())" style="padding:15px; margin:10px; font-size:20px; background:green; color:white; border:none; border-radius:10px;">تشغيل التلقائي</button>
-  <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'manual'})}).then(()=>location.reload())" style="padding:15px; margin:10px; font-size:20px; background:red; color:white; border:none; border-radius:10px;">إيقاف البوت (يدوي)</button>
+  <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'ai'})}).then(()=>location.reload())" style="padding:15px; margin:5px; background:green; color:white; border:none; border-radius:10px;">تشغيل التلقائي</button>
+  <button onclick="fetch('/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'manual'})}).then(()=>location.reload())" style="padding:15px; margin:5px; background:red; color:white; border:none; border-radius:10px;">إيقاف (يدوي)</button>
   
-  <div style="margin-top:20px; padding:10px; border-top:1px solid #444;">
-    <h3>الأرقام المستثناة (لن يرد عليها البوت):</h3>
-    <input id="newPhone" placeholder="أدخل الرقم" style="padding:10px; border-radius:5px;">
-    <button onclick="const p=document.getElementById('newPhone').value; fetch('/add-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:p})}).then(()=>location.reload())" style="padding:10px; background:blue; color:white; border:none; border-radius:5px; cursor:pointer;">إضافة</button>
-    <ul style="list-style:none; padding:0; width:300px; margin:10px auto;">${listHtml}</ul>
+  <div style="margin-top:20px;">
+    <h3>أرقام العائلة (تحكم فردي):</h3>
+    <input id="fPhone" placeholder="أدخل الرقم" style="padding:10px;"><button onclick="fetch('/add-family', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:document.getElementById('fPhone').value})}).then(()=>location.reload())" style="padding:10px;">إضافة</button>
+    <ul style="list-style:none; padding:0; width:300px; margin:10px auto;">${famHtml}</ul>
   </div>
-
-  ${!wsConnected && latestQr ? `<img src="/qr" style="border:4px solid #e94560;border-radius:10px;">` : ''}
+  <div style="margin-top:20px;">
+    <h3>قائمة التجاهل:</h3>
+    <input id="iPhone" placeholder="أدخل الرقم" style="padding:10px;"><button onclick="fetch('/add-ignore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:document.getElementById('iPhone').value})}).then(()=>location.reload())" style="padding:10px;">إضافة</button>
+    <ul style="list-style:none; padding:0; width:300px; margin:10px auto;">${ignHtml}</ul>
+  </div>
+  ${!wsConnected && latestQr ? `<img src="/qr" style="border:4px solid #e94560;border-radius:10px; margin:10px;">` : ''}
   </body></html>`);
 });
 
@@ -232,8 +205,9 @@ async function startBridge() {
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || '';
         const senderPhone = jid.split('@')[0].replace(/[^0-9]/g, '');
         
-        // التحقق من قائمة التجاهل قبل أي شيء
-        if (ignoredNumbers.includes(senderPhone)) continue; 
+        if (ignoredNumbers.includes(senderPhone)) continue;
+        const family = familyContacts.find(f => f.phone === senderPhone);
+        if (family && !family.active) continue;
 
         if (msg.message?.audioMessage && !text) {
           try { const buffer = await downloadMediaMessage(msg, 'buffer', {}); text = await transcribeAudio(buffer); } catch (e) { continue; }
@@ -250,9 +224,7 @@ async function startBridge() {
         history.push({ role: 'user', content: text });
         if (history.length > MAX_HISTORY) history.shift();
         
-        const family = familyContacts.find(f => f.phone && (jid.includes(f.phone) || senderPhone.includes(f.phone)));
-        let familyContext = family ? ` [هذا من العائلة: ${family.relationship}]` : '';
-
+        let familyContext = family ? ` [هذا الرقم من العائلة]` : '';
         let replyText = await callAIGemini(getSystemPrompt(), history.slice(-10), familyContext + '\n' + text);
         if (!replyText) replyText = await callCloudflare(getSystemPrompt(), history.slice(-10), familyContext + '\n' + text);
 
