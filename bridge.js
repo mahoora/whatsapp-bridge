@@ -151,7 +151,16 @@ let restartTimer = null;
 
 app.post('/set-mode', (req, res) => { aiMode = req.body.mode; res.json({ success: true, mode: aiMode }); });
 app.post('/add-family', (req, res) => { const { phone, name } = req.body; if(phone && name && !familyContacts.find(f=>f.phone===phone)){ familyContacts.push({phone, name, active: true}); saveFamily(); } res.json({ success: true }); });
-app.post('/toggle-family', (req, res) => { const phone = req.body.phone; const f = familyContacts.find(x=>x.phone===phone); if(f) f.active = !f.active; saveFamily(); res.json({ success: true }); });
+app.post('/toggle-family', (req, res) => { 
+    const phone = req.body.phone; 
+    const f = familyContacts.find(x => x.phone === phone); 
+    if(f) { 
+        f.active = !f.active; 
+        saveFamily(); 
+        console.log(`[Status Change] ${f.name} is now ${f.active ? 'Active' : 'Inactive'}`);
+    } 
+    res.json({ success: true }); 
+});
 app.post('/remove-family', (req, res) => { familyContacts = familyContacts.filter(x=>x.phone !== req.body.phone); saveFamily(); res.json({ success: true }); });
 
 app.get('/status', (req, res) => { res.json({ connected: wsConnected, mode: aiMode }); });
@@ -203,13 +212,16 @@ async function startBridge() {
         const jid = msg.key.remoteJid;
         if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
 
-        // --- المنطق الصارم للإيقاف (موضوع في أول سطر) ---
         const senderPhone = jid.split('@')[0].replace(/[^0-9]/g, '');
+        // التأكد من استدعاء مصفوفة جهات الاتصال المحدثة
         const family = familyContacts.find(f => f.phone === senderPhone);
+        
+        // --- المنطق الصارم للإيقاف ---
         if (family && family.active === false) {
-             continue; // البوت لن يكمل أي كود إذا كان الرقم موقوفاً
+             console.log(`[Bot Ignored] Blocked contact: ${senderPhone}`);
+             continue; 
         }
-        // ----------------------------------------------
+        // ------------------------------
 
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || '';
         
